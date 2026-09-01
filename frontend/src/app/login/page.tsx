@@ -4,6 +4,8 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { QrCode, Lock, User, AlertCircle, Sparkles, CheckCircle2 } from "lucide-react";
 
+import { API_BASE_URL } from "@/config";
+
 export default function LoginPage() {
   const router = useRouter();
   const [username, setUsername] = useState("");
@@ -19,7 +21,7 @@ export default function LoginPage() {
     const loginPass = overridePass || password;
 
     try {
-      const res = await fetch("http://localhost:8000/api/v1/auth/login", {
+      const res = await fetch(`${API_BASE_URL}/api/v1/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email_or_enrollment: loginUser, password: loginPass }),

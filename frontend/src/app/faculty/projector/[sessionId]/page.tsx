@@ -4,6 +4,8 @@ import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { QrCode, ArrowLeft, StopCircle, CheckCircle2, Clock } from "lucide-react";
 
+import { API_BASE_URL } from "@/config";
+
 export default function ProjectorModePage() {
   const params = useParams();
   const router = useRouter();
@@ -21,7 +23,7 @@ export default function ProjectorModePage() {
   const fetchSession = async () => {
     const token = localStorage.getItem("smartattend_token");
     try {
-      const res = await fetch(`http://localhost:8000/api/v1/attendance/session/${sessionId}/details`, {
+      const res = await fetch(`${API_BASE_URL}/api/v1/attendance/session/${sessionId}/details`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) {
@@ -38,7 +40,7 @@ export default function ProjectorModePage() {
   const handleCloseSession = async () => {
     const token = localStorage.getItem("smartattend_token");
     try {
-      await fetch(`http://localhost:8000/api/v1/attendance/session/${sessionId}/close`, {
+      await fetch(`${API_BASE_URL}/api/v1/attendance/session/${sessionId}/close`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -102,7 +104,7 @@ export default function ProjectorModePage() {
         {/* QR Code Presentation Box */}
         <div className="bg-white p-8 rounded-3xl shadow-2xl flex flex-col items-center border-4 border-blue-500">
           <img
-            src={`http://localhost:8000/api/v1/attendance/qr-code/${details?.token}`}
+            src={`${API_BASE_URL}/api/v1/attendance/qr-code/${details?.token}`}
             alt="Class QR Code"
             className="w-80 h-80 object-contain"
           />

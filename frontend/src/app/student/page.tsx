@@ -4,6 +4,8 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { QrCode, LogOut, CheckCircle2, XCircle, BookOpen, User, Percent, AlertCircle, ChevronRight } from "lucide-react";
 
+import { API_BASE_URL } from "@/config";
+
 export default function StudentDashboard() {
   const router = useRouter();
   const [data, setData] = useState<any>(null);
@@ -24,7 +26,7 @@ export default function StudentDashboard() {
     }
 
     try {
-      const res = await fetch("http://localhost:8000/api/v1/dashboard/student", {
+      const res = await fetch(`${API_BASE_URL}/api/v1/dashboard/student`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (!res.ok) {
@@ -46,7 +48,7 @@ export default function StudentDashboard() {
   const handleLogout = async () => {
     localStorage.removeItem("smartattend_token");
     localStorage.removeItem("smartattend_user");
-    await fetch("http://localhost:8000/api/v1/auth/logout", { method: "POST" });
+    await fetch(`${API_BASE_URL}/api/v1/auth/logout`, { method: "POST" });
     router.push("/login");
   };
 

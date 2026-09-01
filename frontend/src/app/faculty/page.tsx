@@ -7,6 +7,8 @@ import {
   Play, StopCircle, Edit3, Download, Maximize2, LogOut, FileSpreadsheet, UserCheck, Search
 } from "lucide-react";
 
+import { API_BASE_URL, getWsUrl } from "@/config";
+
 export default function FacultyDashboard() {
   const router = useRouter();
   const [scheduleData, setScheduleData] = useState<any>(null);
@@ -45,7 +47,7 @@ export default function FacultyDashboard() {
     }
 
     try {
-      const res = await fetch("http://localhost:8000/api/v1/timetable/schedule", {
+      const res = await fetch(`${API_BASE_URL}/api/v1/timetable/schedule`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (!res.ok) {
@@ -66,7 +68,7 @@ export default function FacultyDashboard() {
     const token = localStorage.getItem("smartattend_token");
 
     try {
-      const res = await fetch(`http://localhost:8000/api/v1/attendance/lecture/${selectedLecture.id}/confirm`, {
+      const res = await fetch(`${API_BASE_URL}/api/v1/attendance/lecture/${selectedLecture.id}/confirm`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -96,7 +98,7 @@ export default function FacultyDashboard() {
     const token = localStorage.getItem("smartattend_token");
 
     try {
-      const res = await fetch(`http://localhost:8000/api/v1/attendance/lecture/${lecture.id}/start`, {
+      const res = await fetch(`${API_BASE_URL}/api/v1/attendance/lecture/${lecture.id}/start`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -121,7 +123,7 @@ export default function FacultyDashboard() {
   const fetchSessionDetails = async (sessionIdOrToken: string | number) => {
     const token = localStorage.getItem("smartattend_token");
     try {
-      const res = await fetch(`http://localhost:8000/api/v1/attendance/session/${sessionIdOrToken}/details`, {
+      const res = await fetch(`${API_BASE_URL}/api/v1/attendance/session/${sessionIdOrToken}/details`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) {
@@ -135,7 +137,7 @@ export default function FacultyDashboard() {
 
   const setupWebSocket = (sessionId: number) => {
     if (ws) ws.close();
-    const socket = new WebSocket(`ws://localhost:8000/ws/attendance/${sessionId}`);
+    const socket = new WebSocket(getWsUrl(sessionId));
 
     socket.onmessage = (event) => {
       const msg = JSON.parse(event.data);
@@ -152,7 +154,7 @@ export default function FacultyDashboard() {
   const handleCloseAttendance = async (sessionId: number) => {
     const token = localStorage.getItem("smartattend_token");
     try {
-      const res = await fetch(`http://localhost:8000/api/v1/attendance/session/${sessionId}/close`, {
+      const res = await fetch(`${API_BASE_URL}/api/v1/attendance/session/${sessionId}/close`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -168,7 +170,7 @@ export default function FacultyDashboard() {
   const handleManualEditStatus = async (sessionId: number, studentId: number, status: string) => {
     const token = localStorage.getItem("smartattend_token");
     try {
-      await fetch(`http://localhost:8000/api/v1/attendance/session/${sessionId}/edit`, {
+      await fetch(`${API_BASE_URL}/api/v1/attendance/session/${sessionId}/edit`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -182,14 +184,14 @@ export default function FacultyDashboard() {
     }
   };
 
-  const handleExportExcel = (subjectId: int = 1) => {
+  const handleExportExcel = (subjectId: number = 1) => {
     const token = localStorage.getItem("smartattend_token");
-    window.open(`http://localhost:8000/api/v1/reports/export/excel?class_id=1&subject_id=${subjectId}`, "_blank");
+    window.open(`${API_BASE_URL}/api/v1/reports/export/excel?class_id=1&subject_id=${subjectId}`, "_blank");
   };
 
-  const handleExportCSV = (subjectId: int = 1) => {
+  const handleExportCSV = (subjectId: number = 1) => {
     const token = localStorage.getItem("smartattend_token");
-    window.open(`http://localhost:8000/api/v1/reports/export/csv?class_id=1&subject_id=${subjectId}`, "_blank");
+    window.open(`${API_BASE_URL}/api/v1/reports/export/csv?class_id=1&subject_id=${subjectId}`, "_blank");
   };
 
   const handleLogout = () => {
@@ -494,7 +496,7 @@ export default function FacultyDashboard() {
               {/* QR Display */}
               <div className="bg-white p-4 rounded-2xl shadow-inner flex flex-col items-center">
                 <img
-                  src={`http://localhost:8000/api/v1/attendance/qr-code/${sessionDetails.token}`}
+                  src={`${API_BASE_URL}/api/v1/attendance/qr-code/${sessionDetails.token}`}
                   alt="QR Code"
                   className="w-56 h-56 object-contain"
                 />

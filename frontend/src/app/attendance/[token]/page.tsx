@@ -4,6 +4,8 @@ import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { CheckCircle2, XCircle, AlertTriangle, QrCode, ArrowRight, ShieldAlert, Clock } from "lucide-react";
 
+import { API_BASE_URL } from "@/config";
+
 export default function StudentAttendanceLandingPage() {
   const params = useParams();
   const router = useRouter();
@@ -31,7 +33,7 @@ export default function StudentAttendanceLandingPage() {
     }
 
     try {
-      const res = await fetch("http://localhost:8000/api/v1/attendance/mark", {
+      const res = await fetch(`${API_BASE_URL}/api/v1/attendance/mark`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

@@ -7,6 +7,8 @@ import {
   LogOut, Search, CheckCircle2, ChevronRight
 } from "lucide-react";
 
+import { API_BASE_URL } from "@/config";
+
 export default function AdminDashboard() {
   const router = useRouter();
   const [data, setData] = useState<any>(null);
@@ -28,7 +30,7 @@ export default function AdminDashboard() {
     }
 
     try {
-      const res = await fetch("http://localhost:8000/api/v1/dashboard/admin", {
+      const res = await fetch(`${API_BASE_URL}/api/v1/dashboard/admin`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) {
@@ -45,7 +47,7 @@ export default function AdminDashboard() {
   const fetchAuditLogs = async () => {
     const token = localStorage.getItem("smartattend_token");
     try {
-      const res = await fetch("http://localhost:8000/api/v1/reports/audit-logs", {
+      const res = await fetch(`${API_BASE_URL}/api/v1/reports/audit-logs`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) {
@@ -58,7 +60,7 @@ export default function AdminDashboard() {
   };
 
   const handleExportExcel = (subjectId: number = 1) => {
-    window.open(`http://localhost:8000/api/v1/reports/export/excel?class_id=1&subject_id=${subjectId}`, "_blank");
+    window.open(`${API_BASE_URL}/api/v1/reports/export/excel?class_id=1&subject_id=${subjectId}`, "_blank");
   };
 
   const handleLogout = () => {
