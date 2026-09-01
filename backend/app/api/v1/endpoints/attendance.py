@@ -203,12 +203,8 @@ async def api_edit_attendance(
 
 @router.get("/qr-code/{token}")
 def api_generate_qr_code(token: str, request: Request):
-    # Base URL for frontend attendance landing page
-    host = request.headers.get("host", "localhost:3000")
-    scheme = "https" if "https" in request.url.scheme else "http"
-    
-    # URL encoded in QR Code
-    url = f"http://{host.split(':')[0]}:3000/attendance/{token}"
+    frontend_url = os.getenv("FRONTEND_URL", "https://nsit-attendance.netlify.app").rstrip("/")
+    url = f"{frontend_url}/attendance/{token}"
 
     img = qrcode.make(url)
     img_byte_arr = io.BytesIO()

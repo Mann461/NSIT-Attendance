@@ -36,8 +36,13 @@ export default function LoginPage() {
       localStorage.setItem("smartattend_token", data.access_token);
       localStorage.setItem("smartattend_user", JSON.stringify(data.user));
 
-      // Redirect based on role
-      if (data.user.role === "STUDENT") {
+      // Redirect after login
+      const urlParams = new URLSearchParams(window.location.search);
+      const redirectUrl = urlParams.get("redirect");
+
+      if (redirectUrl) {
+        router.push(redirectUrl);
+      } else if (data.user.role === "STUDENT") {
         router.push("/student");
       } else if (data.user.role === "FACULTY") {
         router.push("/faculty");
