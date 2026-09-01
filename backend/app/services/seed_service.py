@@ -44,6 +44,25 @@ STUDENT_SEED_DATA = [
     ("251943004034", "033", "Ankita Kumari"),
 ]
 
+HISTORICAL_DATES = [
+    datetime.date(2026, 7, 27),
+    datetime.date(2026, 8, 3),
+    datetime.date(2026, 8, 10),
+    datetime.date(2026, 8, 17),
+    datetime.date(2026, 8, 24),
+    datetime.date(2026, 8, 31),
+]
+
+HISTORICAL_MATHS_GRID = [
+    "PPPPPP", "PPPPPA", "PPPPPP", "PPAPPP", "PPPPPP",
+    "APPPPP", "PPPPPP", "PPPPAP", "PPPPPP", "PPPPPP",
+    "PPAPPP", "PPPPPP", "PPPPPP", "PPPPPP", "PAPPPP",
+    "PPPPPP", "PPPPAP", "PPAPPP", "PPPPPP", "PPPPPP",
+    "PPPPPP", "APPPPP", "PPPPPP", "PPPPPP", "PPPPPA",
+    "PPPPPP", "PPAPPP", "PPPPPP", "PPPPPP", "PPPPPP",
+    "PAPPPP", "PPPPPP", "PPPPPP"
+]
+
 
 def seed_database(db: Session):
     Base.metadata.create_all(bind=engine)
