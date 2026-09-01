@@ -17,7 +17,9 @@ export default function StudentAttendanceLandingPage() {
   const [errorMessage, setErrorMessage] = useState<string>("");
 
   useEffect(() => {
-    markAttendance();
+    if (token) {
+      markAttendance();
+    }
   }, [token]);
 
   const markAttendance = async () => {
