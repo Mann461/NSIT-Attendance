@@ -1,0 +1,43 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: smartattend_db
+    environment:
+      POSTGRES_USER: smartattend
+      POSTGRES_PASSWORD: smartattend_password
+      POSTGRES_DB: smartattend_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: always
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: smartattend_backend
+    environment:
+      - DATABASE_URL=postgresql://smartattend:smartattend_password@db:5432/smartattend_db
+      - SECRET_KEY=smartattend_super_secret_jwt_key_2026_nsit
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+    restart: always
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: smartattend_frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    restart: always
+
+volumes:
+  postgres_data:
