@@ -236,7 +236,34 @@ async def api_edit_attendance(
 
 @router.get("/qr-code/{token}")
 def api_generate_qr_code(token: str, request: Request):
-    frontend_url = os.getenv("FRONTEND_URL", "https://nsit-attendance.netlify.app").rstrip("/")
+    # Detect frontend URL from Referer, Origin, or environment
+    referer = request.headers.get("referer")
+    origin = request.headers.get("origin")
+    client_frontend = None
+    if referer:
+        try:
+            parsed = urlparse(referer)
+            client_frontend = f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
+        except Exception:
+            pass
+    elif origin:
+        client_frontend = origin.rstrip("/")
+
+    env_frontend = os.getenv("FRONTEND_URL", "").strip().rstrip("/")
+    # Guard against misconfigured FRONTEND_URL pointing to the Render backend host or port 3000
+    if env_frontend and ("onrender.com" in env_frontend or ":3000" in env_frontend):
+        env_frontend = ""
+
+    if client_frontend and ("netlify.app" in client_frontend or "localhost" in client_frontend or "127.0.0.1" in client_frontend):
+        frontend_url = client_frontend
+    elif env_frontend:
+        frontend_url = env_frontend
+    else:
+        frontend_url = "https://nsit-attendance.netlify.app"
+
+    if not frontend_url.startswith("http://") and not frontend_url.startswith("https://"):
+        frontend_url = f"https://{frontend_url}"
+
     url = f"{frontend_url}/attendance/{token}"
 
     img = qrcode.make(url)
