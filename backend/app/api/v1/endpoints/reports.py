@@ -20,8 +20,8 @@ def export_excel(
         return Response(status_code=403, content="Unauthorized")
 
     excel_bytes = generate_excel_attendance_sheet(db, class_id=class_id, subject_id=subject_id)
-    return StreamingResponse(
-        iter([excel_bytes]),
+    return Response(
+        content=excel_bytes,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f"attachment; filename=Lesson_Attendance_Sheet_Sub_{subject_id}.xlsx"}
     )

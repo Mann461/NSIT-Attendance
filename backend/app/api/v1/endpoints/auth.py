@@ -14,6 +14,8 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
     token = None
     if auth_header and auth_header.startswith("Bearer "):
         token = auth_header.split(" ")[1]
+    elif "token" in request.query_params:
+        token = request.query_params.get("token")
     else:
         token = request.cookies.get("smartattend_session")
 
