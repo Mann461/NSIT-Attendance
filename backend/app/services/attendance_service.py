@@ -3,12 +3,13 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from fastapi import HTTPException, status
 
+from app.database import utc_now
 from app.models.schema import (
     ScheduledLecture, LectureStatus, AttendanceSession, SessionStatus,
     AttendanceRecord, AttendanceStatus, AttendanceSource, Student, Device,
     AuditLog, Class
 )
-from app.auth.security import generate_secure_session_token, generate_device_token
+from app.auth.security import generate_secure_session_token, generate_device_token, verify_rotating_qr_token
 from app.websocket.manager import ws_manager
 
 async def confirm_lecture(
@@ -66,7 +67,7 @@ async def start_attendance_session(db: Session, lecture_id: int, duration_minute
     if lecture.attendance_session:
         session = lecture.attendance_session
         session.status = SessionStatus.ACTIVE.value
-        session.opened_at = datetime.datetime.utcnow()
+        session.opened_at = utc_now()
         session.duration_minutes = duration_minutes
     else:
         token = generate_secure_session_token()
@@ -74,7 +75,7 @@ async def start_attendance_session(db: Session, lecture_id: int, duration_minute
             scheduled_lecture_id=lecture.id,
             token=token,
             status=SessionStatus.ACTIVE.value,
-            opened_at=datetime.datetime.utcnow(),
+            opened_at=utc_now(),
             duration_minutes=duration_minutes
         )
         db.add(session)
@@ -100,7 +101,7 @@ async def close_attendance_session(db: Session, session_id: int, user_id: int = 
         raise HTTPException(status_code=404, detail="Attendance session not found")
 
     session.status = SessionStatus.CLOSED.value
-    session.closed_at = datetime.datetime.utcnow()
+    session.closed_at = utc_now()
     
     lecture = session.scheduled_lecture
     lecture.status = LectureStatus.COMPLETED.value
@@ -148,7 +149,15 @@ async def mark_student_attendance(
     device_token: str,
     user_agent: str = None
 ):
-    session = db.query(AttendanceSession).filter(AttendanceSession.token == session_token).first()
+    session = None
+    if session_token.startswith("rot_"):
+        session_id = verify_rotating_qr_token(session_token)
+        if not session_id:
+            raise HTTPException(status_code=400, detail="Rotating QR token has expired or is invalid.")
+        session = db.query(AttendanceSession).filter(AttendanceSession.id == session_id).first()
+    else:
+        session = db.query(AttendanceSession).filter(AttendanceSession.token == session_token).first()
+
     if not session:
         raise HTTPException(status_code=404, detail="Invalid or expired attendance session token.")
 
@@ -157,7 +166,7 @@ async def mark_student_attendance(
         raise HTTPException(status_code=400, detail="This attendance session is no longer active.")
 
     # Check timer expiration
-    now = datetime.datetime.utcnow()
+    now = utc_now()
     expires_at = session.opened_at + datetime.timedelta(minutes=session.duration_minutes)
     if now > expires_at:
         session.status = SessionStatus.EXPIRED.value
@@ -180,10 +189,14 @@ async def mark_student_attendance(
 
     device = db.query(Device).filter(Device.device_token == device_token).first()
     if not device:
-        device = Device(device_token=device_token, user_agent=user_agent)
-        db.add(device)
-        db.commit()
-        db.refresh(device)
+        try:
+            device = Device(device_token=device_token, user_agent=user_agent)
+            db.add(device)
+            db.commit()
+            db.refresh(device)
+        except IntegrityError:
+            db.rollback()
+            device = db.query(Device).filter(Device.device_token == device_token).first()
 
     # Check 1: Has student already marked attendance for this session?
     existing_student_record = db.query(AttendanceRecord).filter(
@@ -245,8 +258,46 @@ async def mark_student_attendance(
         details=f"Marked PRESENT via QR token."
     )
     db.add(audit)
-    db.commit()
-    db.refresh(new_record)
+
+    # FIX 3: Catch IntegrityError to gracefully handle race conditions
+    try:
+        db.commit()
+        db.refresh(new_record)
+    except IntegrityError:
+        db.rollback()
+        # Race condition: determine whether student or device caused constraint violation
+        existing_student_record = db.query(AttendanceRecord).filter(
+            AttendanceRecord.session_id == session.id,
+            AttendanceRecord.student_id == student.id
+        ).first()
+
+        if existing_student_record:
+            return {
+                "status": "ALREADY_RECORDED",
+                "message": "Attendance already recorded for this lecture.",
+                "record": {
+                    "student_name": student.user.full_name,
+                    "roll_no": student.roll_no,
+                    "status": existing_student_record.status,
+                    "timestamp": existing_student_record.timestamp.isoformat() if existing_student_record.timestamp else "-"
+                }
+            }
+
+        existing_device_record = db.query(AttendanceRecord).filter(
+            AttendanceRecord.session_id == session.id,
+            AttendanceRecord.device_id == device.id
+        ).first()
+
+        if existing_device_record:
+            raise HTTPException(
+                status_code=400,
+                detail="This device has already been used for this attendance session."
+            )
+
+        raise HTTPException(
+            status_code=400,
+            detail="Attendance conflict detected. Record already submitted."
+        )
 
     # Broadcast update to faculty dashboard WebSockets
     total_students = db.query(Student).filter(Student.class_id == lecture_class_id).count()

@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, ConfigDict
 from typing import Optional, List, Any
 import datetime
 
@@ -20,8 +20,7 @@ class UserResponse(BaseModel):
     student_profile: Optional["StudentResponse"] = None
     faculty_profile: Optional["FacultyResponse"] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class StudentResponse(BaseModel):
     id: int
@@ -32,8 +31,7 @@ class StudentResponse(BaseModel):
     branch: str
     class_id: int
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class FacultyResponse(BaseModel):
     id: int
@@ -42,8 +40,7 @@ class FacultyResponse(BaseModel):
     department: str
     abbreviation: Optional[str] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 # --- Timetable & Lecture Schemas ---
 class TimetableEntryResponse(BaseModel):

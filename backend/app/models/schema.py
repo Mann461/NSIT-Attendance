@@ -4,7 +4,7 @@ from sqlalchemy import (
     Column, Integer, String, Boolean, DateTime, Date, Time, Enum, ForeignKey, UniqueConstraint, Text
 )
 from sqlalchemy.orm import relationship
-from app.database import Base
+from app.database import Base, utc_now
 
 class UserRole(str, enum.Enum):
     STUDENT = "STUDENT"
@@ -45,7 +45,7 @@ class User(Base):
     full_name = Column(String, nullable=False)
     role = Column(String, nullable=False, default=UserRole.STUDENT.value)
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
 
     student_profile = relationship("Student", back_populates="user", uselist=False)
     faculty_profile = relationship("Faculty", back_populates="user", uselist=False)
@@ -137,7 +137,7 @@ class ScheduledLecture(Base):
     rescheduled_date = Column(Date, nullable=True)
     rescheduled_start = Column(Time, nullable=True)
     rescheduled_end = Column(Time, nullable=True)
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
 
     timetable_entry = relationship("TimetableEntry", back_populates="scheduled_lectures")
     attendance_session = relationship("AttendanceSession", back_populates="scheduled_lecture", uselist=False)
@@ -149,7 +149,7 @@ class AttendanceSession(Base):
     scheduled_lecture_id = Column(Integer, ForeignKey("scheduled_lectures.id"), unique=True, nullable=False)
     token = Column(String, unique=True, index=True, nullable=False)
     status = Column(String, default=SessionStatus.ACTIVE.value)
-    opened_at = Column(DateTime, default=datetime.datetime.utcnow)
+    opened_at = Column(DateTime, default=utc_now)
     closed_at = Column(DateTime, nullable=True)
     duration_minutes = Column(Integer, default=5)
 
@@ -162,7 +162,7 @@ class Device(Base):
     id = Column(Integer, primary_key=True, index=True)
     device_token = Column(String, unique=True, index=True, nullable=False)
     user_agent = Column(Text, nullable=True)
-    first_used_at = Column(DateTime, default=datetime.datetime.utcnow)
+    first_used_at = Column(DateTime, default=utc_now)
 
     attendance_records = relationship("AttendanceRecord", back_populates="device")
 
@@ -173,7 +173,7 @@ class AttendanceRecord(Base):
     session_id = Column(Integer, ForeignKey("attendance_sessions.id"), nullable=False)
     student_id = Column(Integer, ForeignKey("students.id"), nullable=False)
     device_id = Column(Integer, ForeignKey("devices.id"), nullable=True)
-    timestamp = Column(DateTime, default=datetime.datetime.utcnow)
+    timestamp = Column(DateTime, default=utc_now)
     status = Column(String, default=AttendanceStatus.PRESENT.value)
     source = Column(String, default=AttendanceSource.QR_SCAN.value)
     remarks = Column(String, nullable=True)
@@ -197,6 +197,6 @@ class AuditLog(Base):
     entity_id = Column(String, nullable=True)
     details = Column(Text, nullable=True)
     ip_address = Column(String, nullable=True)
-    timestamp = Column(DateTime, default=datetime.datetime.utcnow)
+    timestamp = Column(DateTime, default=utc_now)
 
     user = relationship("User", back_populates="audit_logs")

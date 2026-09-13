@@ -4,8 +4,11 @@ from typing import Optional
 
 from app.database import get_db
 from app.models.schema import User, Student, UserRole, Device
-from app.auth.security import verify_password, create_access_token, decode_access_token, generate_device_token
 from app.schemas.pydantic_models import LoginRequest, TokenResponse, UserResponse
+from app.auth.security import (
+    verify_password, verify_and_check_rehash, hash_password,
+    create_access_token, decode_access_token, generate_device_token
+)
 
 router = APIRouter()
 
@@ -57,11 +60,17 @@ def login(
         if student:
             user = student.user
 
-    if not user or not verify_password(req.password, user.password_hash):
+    is_valid, needs_rehash = verify_and_check_rehash(req.password, user.password_hash) if user else (False, False)
+    if not user or not is_valid:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid credentials. Please check your username/password."
         )
+
+    # Automatic transparent migration from legacy hash to Bcrypt
+    if needs_rehash:
+        user.password_hash = hash_password(req.password)
+        db.commit()
 
     token = create_access_token({"sub": str(user.id), "role": user.role})
 

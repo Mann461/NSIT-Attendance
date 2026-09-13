@@ -138,7 +138,8 @@ export default function FacultyDashboard() {
 
   const setupWebSocket = (sessionId: number) => {
     if (ws) ws.close();
-    const socket = new WebSocket(getWsUrl(sessionId));
+    const token = localStorage.getItem("smartattend_token") || "";
+    const socket = new WebSocket(getWsUrl(sessionId, token));
 
     socket.onmessage = (event) => {
       const msg = JSON.parse(event.data);

@@ -48,12 +48,52 @@ def test_database_admin_dashboard_eval():
         db.close()
 
 def test_websocket_realtime_stream():
+    from starlette.websockets import WebSocketDisconnect
+    from app.auth.security import create_access_token
+    from datetime import timedelta
+
     db = SessionLocal()
     session = db.query(AttendanceSession).first()
+    faculty_user = db.query(User).filter(User.role == "FACULTY").first()
+    student_user = db.query(User).filter(User.role == "STUDENT").first()
     db.close()
-    
-    with client.websocket_connect(f"/ws/attendance/{session.id}") as websocket:
-        # Broadcast event
+
+    # 1. No token -> Rejected with 1008
+    with pytest.raises(WebSocketDisconnect) as exc_no_token:
+        with client.websocket_connect(f"/ws/attendance/{session.id}"):
+            pass
+    assert exc_no_token.value.code == 1008
+
+    # 2. Invalid token -> Rejected with 1008
+    with pytest.raises(WebSocketDisconnect) as exc_invalid:
+        with client.websocket_connect(f"/ws/attendance/{session.id}?token=invalid_garbage_token"):
+            pass
+    assert exc_invalid.value.code == 1008
+
+    # 3. Expired token -> Rejected with 1008
+    expired_token = create_access_token(
+        data={"sub": str(faculty_user.id), "email": faculty_user.email, "role": faculty_user.role},
+        expires_delta=timedelta(seconds=-10)
+    )
+    with pytest.raises(WebSocketDisconnect) as exc_expired:
+        with client.websocket_connect(f"/ws/attendance/{session.id}?token={expired_token}"):
+            pass
+    assert exc_expired.value.code == 1008
+
+    # 4. Student token attempting to connect -> Rejected with 1008 (Students not permitted)
+    student_token = create_access_token(
+        data={"sub": str(student_user.id), "email": student_user.email, "role": student_user.role}
+    )
+    with pytest.raises(WebSocketDisconnect) as exc_student:
+        with client.websocket_connect(f"/ws/attendance/{session.id}?token={student_token}"):
+            pass
+    assert exc_student.value.code == 1008
+
+    # 5. Authorized Faculty token -> Accepted & receives stream events
+    fac_token = create_access_token(
+        data={"sub": str(faculty_user.id), "email": faculty_user.email, "role": faculty_user.role}
+    )
+    with client.websocket_connect(f"/ws/attendance/{session.id}?token={fac_token}") as websocket:
         test_payload = {"type": "STUDENT_SCANNED", "roll_no": "001", "name": "Dhrumil Nandanvar"}
         asyncio.run(ws_manager.broadcast_attendance_update(session.id, test_payload))
         msg = websocket.receive_json()

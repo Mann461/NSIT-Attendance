@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from typing import Optional
 import qrcode
 
-from app.database import get_db
+from app.database import get_db, utc_now
 from app.api.v1.endpoints.auth import get_current_user
 from app.models.schema import User, UserRole, AttendanceSession, ScheduledLecture, Student, AttendanceRecord, AttendanceStatus
 from app.schemas.pydantic_models import (
@@ -17,6 +17,10 @@ from app.schemas.pydantic_models import (
 from app.services.attendance_service import (
     confirm_lecture, start_attendance_session, close_attendance_session,
     mark_student_attendance, edit_student_attendance
+)
+from app.services.rate_limiter import (
+    attendance_rate_limiter, USER_MAX_REQUESTS, USER_WINDOW_SECONDS,
+    IP_MAX_REQUESTS, IP_WINDOW_SECONDS
 )
 
 router = APIRouter()
@@ -123,7 +127,7 @@ def api_get_session_details(
         })
 
     expires_at = session.opened_at + datetime.timedelta(minutes=session.duration_minutes) if session.opened_at else None
-    remaining_seconds = max(0, int((expires_at - datetime.datetime.utcnow()).total_seconds())) if expires_at and session.status == "ACTIVE" else 0
+    remaining_seconds = max(0, int((expires_at - utc_now()).total_seconds())) if expires_at and session.status == "ACTIVE" else 0
 
     return {
         "session_id": session.id,
@@ -161,6 +165,33 @@ async def api_mark_attendance(
 ):
     if current_user.role != UserRole.STUDENT.value:
         raise HTTPException(status_code=403, detail="Only student accounts can mark attendance.")
+
+    # 1. Rate Limit per Student (10 requests per 30s)
+    user_key = f"user:{current_user.id}"
+    allowed, retry_after = attendance_rate_limiter.is_allowed(
+        user_key, USER_MAX_REQUESTS, USER_WINDOW_SECONDS
+    )
+    if not allowed:
+        retry_val = str(int(retry_after) or 1)
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many attendance attempts. Please wait {retry_after} seconds before retrying.",
+            headers={"Retry-After": retry_val}
+        )
+
+    # 2. Rate Limit per Network IP (180 requests per 60s for classroom Wi-Fi burst tolerance)
+    client_ip = request.client.host if request.client else "unknown"
+    ip_key = f"ip:{client_ip}"
+    ip_allowed, ip_retry_after = attendance_rate_limiter.is_allowed(
+        ip_key, IP_MAX_REQUESTS, IP_WINDOW_SECONDS
+    )
+    if not ip_allowed:
+        ip_retry_val = str(int(ip_retry_after) or 1)
+        raise HTTPException(
+            status_code=429,
+            detail=f"Classroom network attendance burst limit reached. Please wait {ip_retry_after} seconds.",
+            headers={"Retry-After": ip_retry_val}
+        )
 
     device_token = req.device_token or request.cookies.get("smartattend_device_id")
     user_agent = request.headers.get("user-agent")
@@ -214,3 +245,23 @@ def api_generate_qr_code(token: str, request: Request):
     img_byte_arr.seek(0)
 
     return StreamingResponse(img_byte_arr, media_type="image/png")
+
+@router.get("/session/{session_id}/rotating-token")
+def api_get_rotating_token(
+    session_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    from app.auth.security import generate_rotating_qr_token
+    session = db.query(AttendanceSession).filter(AttendanceSession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Attendance session not found")
+    if session.status != "ACTIVE":
+        raise HTTPException(status_code=400, detail="Attendance session is not active")
+    rotating_token = generate_rotating_qr_token(session.id, window_seconds=15)
+    return {
+        "session_id": session.id,
+        "rotating_token": rotating_token,
+        "window_seconds": 15
+    }
+

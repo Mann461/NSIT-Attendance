@@ -1,7 +1,11 @@
+from datetime import datetime, timezone
 from sqlalchemy import create_engine
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import declarative_base, sessionmaker
 from app.config import settings
+
+def utc_now() -> datetime:
+    """Returns timezone-safe UTC datetime compatible with SQLite and Postgres."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 connect_args = {}
 if settings.DATABASE_URL.startswith("sqlite"):
