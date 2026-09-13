@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { QrCode, ArrowLeft, StopCircle, CheckCircle2, Clock } from "lucide-react";
 
 import { API_BASE_URL } from "@/config";
+import AttendanceQRCode from "@/components/AttendanceQRCode";
 
 export default function ProjectorModePage() {
   const params = useParams();
@@ -102,13 +103,9 @@ export default function ProjectorModePage() {
       {/* Main Center Display */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center my-auto py-8 max-w-6xl mx-auto w-full">
         {/* QR Code Presentation Box */}
-        <div className="bg-white p-8 rounded-3xl shadow-2xl flex flex-col items-center border-4 border-blue-500">
-          <img
-            src={`${API_BASE_URL}/api/v1/attendance/qr-code/${details?.token}`}
-            alt="Class QR Code"
-            className="w-80 h-80 object-contain"
-          />
-          <p className="text-xs text-slate-500 font-mono mt-4 font-bold tracking-widest uppercase">
+        <div className="flex flex-col items-center justify-center w-full">
+          <AttendanceQRCode token={details?.token} size={320} />
+          <p className="text-xs text-slate-400 font-mono mt-3 font-bold tracking-widest uppercase text-center">
             SCAN QR WITH YOUR PHONE CAMERA
           </p>
         </div>

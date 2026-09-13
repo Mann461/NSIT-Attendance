@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 
 import { API_BASE_URL, getWsUrl } from "@/config";
+import AttendanceQRCode from "@/components/AttendanceQRCode";
 
 export default function FacultyDashboard() {
   const router = useRouter();
@@ -663,15 +664,8 @@ export default function FacultyDashboard() {
             {/* QR & Counter Grid */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-center">
               {/* QR Display */}
-              <div className="bg-white p-4 rounded-2xl shadow-inner flex flex-col items-center max-w-[240px] mx-auto w-full">
-                <img
-                  src={`${API_BASE_URL}/api/v1/attendance/qr-code/${sessionDetails.token}`}
-                  alt="QR Code"
-                  className="w-44 h-44 sm:w-48 sm:h-48 object-contain"
-                />
-                <p className="text-[10px] text-slate-600 font-mono mt-2 text-center break-all font-semibold">
-                  Valid for 5 Minutes
-                </p>
+              <div className="max-w-[280px] mx-auto w-full">
+                <AttendanceQRCode token={sessionDetails.token} size={180} />
               </div>
 
               {/* Counter & Controls */}
