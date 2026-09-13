@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from typing import Optional, List
 
-from app.database import get_db
+from app.database import get_db, current_ist_date
 from app.services.timetable_service import get_today_schedule
 from app.api.v1.endpoints.auth import get_current_user
 from app.models.schema import User, UserRole
@@ -20,9 +20,9 @@ def get_schedule(
         try:
             target_date = datetime.datetime.strptime(date_str, "%Y-%m-%d").date()
         except ValueError:
-            target_date = datetime.date.today()
+            target_date = current_ist_date()
     else:
-        target_date = datetime.date.today()
+        target_date = current_ist_date()
 
     schedule = get_today_schedule(db, target_date=target_date, class_id=1)
 

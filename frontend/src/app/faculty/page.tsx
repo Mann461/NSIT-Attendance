@@ -36,8 +36,15 @@ export default function FacultyDashboard() {
   const [ws, setWs] = useState<WebSocket | null>(null);
   const [selectedDate, setSelectedDate] = useState<string>("");
 
+  const getLocalDateString = (dateObj: Date = new Date()) => {
+    const yyyy = dateObj.getFullYear();
+    const mm = String(dateObj.getMonth() + 1).padStart(2, "0");
+    const dd = String(dateObj.getDate()).padStart(2, "0");
+    return `${yyyy}-${mm}-${dd}`;
+  };
+
   useEffect(() => {
-    fetchSchedule();
+    fetchSchedule(getLocalDateString());
   }, []);
 
   const fetchSchedule = async (dateStr?: string) => {
@@ -48,10 +55,11 @@ export default function FacultyDashboard() {
       return;
     }
 
+    const targetDate = dateStr || selectedDate || getLocalDateString();
+    setSelectedDate(targetDate);
+
     try {
-      const url = dateStr
-        ? `${API_BASE_URL}/api/v1/timetable/schedule?date=${encodeURIComponent(dateStr)}`
-        : `${API_BASE_URL}/api/v1/timetable/schedule`;
+      const url = `${API_BASE_URL}/api/v1/timetable/schedule?date=${encodeURIComponent(targetDate)}`;
       const res = await fetch(url, {
         headers: { Authorization: `Bearer ${token}` }
       });

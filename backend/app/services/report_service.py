@@ -6,6 +6,7 @@ import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
+from app.database import current_ist_date
 from app.models.schema import (
     Student, Class, Subject, ScheduledLecture, LectureStatus,
     AttendanceSession, AttendanceRecord, AttendanceStatus, TimetableEntry, Faculty, User
@@ -116,7 +117,7 @@ def get_admin_dashboard_summary(db: Session, class_id: int = 1):
 
     avg_class_pct = round(total_class_pct / len(students), 2) if students else 0.0
 
-    today = datetime.date.today()
+    today = current_ist_date()
     today_lectures = db.query(ScheduledLecture).filter(ScheduledLecture.date == today).all()
     conducted_today = [l for l in today_lectures if l.status in [LectureStatus.COMPLETED.value, LectureStatus.ACTIVE.value]]
 

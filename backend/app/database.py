@@ -1,7 +1,14 @@
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta, date
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 from app.config import settings
+
+# Indian Standard Time (IST, UTC+5:30) for NSIT college schedule
+IST_TIMEZONE = timezone(timedelta(hours=5, minutes=30))
+
+def current_ist_date() -> date:
+    """Returns current date in Indian Standard Time (IST, UTC+5:30)."""
+    return datetime.now(timezone.utc).astimezone(IST_TIMEZONE).date()
 
 def utc_now() -> datetime:
     """Returns timezone-safe UTC datetime compatible with SQLite and Postgres."""
