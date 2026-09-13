@@ -34,12 +34,13 @@ export default function FacultyDashboard() {
   const [sessionDetails, setSessionDetails] = useState<any>(null);
   const [studentSearch, setStudentSearch] = useState("");
   const [ws, setWs] = useState<WebSocket | null>(null);
+  const [selectedDate, setSelectedDate] = useState<string>("");
 
   useEffect(() => {
     fetchSchedule();
   }, []);
 
-  const fetchSchedule = async () => {
+  const fetchSchedule = async (dateStr?: string) => {
     setLoading(true);
     const token = localStorage.getItem("smartattend_token");
     if (!token) {
@@ -48,7 +49,10 @@ export default function FacultyDashboard() {
     }
 
     try {
-      const res = await fetch(`${API_BASE_URL}/api/v1/timetable/schedule`, {
+      const url = dateStr
+        ? `${API_BASE_URL}/api/v1/timetable/schedule?date=${encodeURIComponent(dateStr)}`
+        : `${API_BASE_URL}/api/v1/timetable/schedule`;
+      const res = await fetch(url, {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (!res.ok) {
@@ -57,6 +61,9 @@ export default function FacultyDashboard() {
       }
       const data = await res.json();
       setScheduleData(data);
+      if (data.date) {
+        setSelectedDate(data.date);
+      }
     } catch (err: any) {
       console.error(err);
     } finally {
@@ -287,19 +294,33 @@ export default function FacultyDashboard() {
             </p>
           </div>
 
-          <button
-            onClick={fetchSchedule}
-            className="px-3.5 py-2.5 bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-200 text-xs font-semibold rounded-xl border border-slate-700/80 transition flex items-center justify-center gap-2 self-stretch sm:self-auto"
-          >
-            <RefreshCw className="w-3.5 h-3.5" /> Refresh Schedule
-          </button>
+          <div className="flex flex-wrap items-center gap-2 self-stretch sm:self-auto">
+            <input
+              type="date"
+              value={selectedDate}
+              onChange={(e) => {
+                if (e.target.value) {
+                  setSelectedDate(e.target.value);
+                  fetchSchedule(e.target.value);
+                }
+              }}
+              className="px-3 py-2 bg-slate-800 hover:bg-slate-750 text-slate-200 text-xs rounded-xl border border-slate-700/80 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+            />
+            <button
+              onClick={() => fetchSchedule()}
+              className="px-3.5 py-2.5 bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-200 text-xs font-semibold rounded-xl border border-slate-700/80 transition flex items-center justify-center gap-2"
+              title="Refresh / Reset to Today"
+            >
+              <RefreshCw className="w-3.5 h-3.5" /> Today
+            </button>
+          </div>
         </div>
 
         {/* Schedule List */}
         <div className="space-y-3">
           <h3 className="text-sm sm:text-base font-bold text-white flex items-center gap-2">
             <Clock className="w-4 h-4 text-blue-400" />
-            <span>Today&apos;s Lectures ({scheduleData?.lectures?.length || 0})</span>
+            <span>{scheduleData?.day_name}&apos;s Lectures ({scheduleData?.lectures?.length || 0})</span>
           </h3>
 
           {loading ? (
@@ -308,8 +329,31 @@ export default function FacultyDashboard() {
               <span>Loading timetable schedule...</span>
             </div>
           ) : scheduleData?.lectures?.length === 0 ? (
-            <div className="p-8 text-center text-slate-400 text-xs bg-slate-900 border border-slate-800 rounded-2xl">
-              No scheduled lectures for today.
+            <div className="p-8 text-center text-slate-400 text-xs bg-slate-900 border border-slate-800 rounded-2xl space-y-3">
+              <div className="w-10 h-10 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center mx-auto text-slate-400">
+                <Calendar className="w-5 h-5 text-blue-400" />
+              </div>
+              <p className="font-semibold text-slate-200 text-sm">
+                No scheduled lectures for {scheduleData?.day_name} ({scheduleData?.date})
+              </p>
+              <p className="text-xs text-slate-400 max-w-md mx-auto">
+                Classes run Monday through Friday. On weekends (Saturday &amp; Sunday), no lectures are scheduled. Use the date selector above to browse any weekday timetable.
+              </p>
+              <button
+                onClick={() => {
+                  const d = new Date();
+                  const day = d.getDay();
+                  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+                  d.setDate(diff);
+                  const yyyy = d.getFullYear();
+                  const mm = String(d.getMonth() + 1).padStart(2, '0');
+                  const dd = String(d.getDate()).padStart(2, '0');
+                  fetchSchedule(`${yyyy}-${mm}-${dd}`);
+                }}
+                className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 active:scale-95 text-white text-xs font-semibold rounded-xl shadow-lg shadow-blue-500/20 transition"
+              >
+                <Calendar className="w-3.5 h-3.5" /> View Monday&apos;s Schedule
+              </button>
             </div>
           ) : (
             scheduleData?.lectures?.map((lecture: any) => {
