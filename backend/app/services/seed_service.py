@@ -315,4 +315,76 @@ def seed_database(db: Session):
                     db.add(rec)
 
         db.commit()
+
+    # 8. Restore Conducted Lecture & Attendance for Dr. Vishali Sharma (CTBT-PCC-304) on 2026-09-15
+    co_entry = db.query(TimetableEntry).filter(
+        TimetableEntry.class_id == cls.id,
+        TimetableEntry.day_of_week == 1,
+        TimetableEntry.start_time == datetime.time(9, 30)
+    ).first()
+
+    if co_entry:
+        lec_date = datetime.date(2026, 9, 15)
+        lec = db.query(ScheduledLecture).filter(
+            ScheduledLecture.timetable_id == co_entry.id,
+            ScheduledLecture.date == lec_date
+        ).first()
+
+        if not lec:
+            lec = ScheduledLecture(
+                timetable_id=co_entry.id,
+                date=lec_date,
+                scheduled_start=co_entry.start_time,
+                scheduled_end=co_entry.end_time,
+                lecture_number=1,
+                status=LectureStatus.COMPLETED.value
+            )
+            db.add(lec)
+            db.commit()
+            db.refresh(lec)
+        else:
+            lec.status = LectureStatus.COMPLETED.value
+            db.commit()
+
+        session = db.query(AttendanceSession).filter(AttendanceSession.scheduled_lecture_id == lec.id).first()
+        if not session:
+            session = AttendanceSession(
+                scheduled_lecture_id=lec.id,
+                token=f"session_token_co_{lec_date.isoformat()}",
+                status=SessionStatus.CLOSED.value,
+                opened_at=datetime.datetime.combine(lec_date, co_entry.start_time),
+                closed_at=datetime.datetime.combine(lec_date, co_entry.end_time),
+                duration_minutes=5
+            )
+            db.add(session)
+            db.commit()
+            db.refresh(session)
+
+        # Roll numbers present from the downloaded sheet:
+        # Tanmay Janardan Das (008), Mann Sanjaykumar Thakkar (014), Harsh Verma (027)
+        present_rolls = {"008", "014", "027"}
+
+        for student_obj in student_objs:
+            att_status = AttendanceStatus.PRESENT.value if student_obj.roll_no in present_rolls else AttendanceStatus.ABSENT.value
+            rec = db.query(AttendanceRecord).filter(
+                AttendanceRecord.session_id == session.id,
+                AttendanceRecord.student_id == student_obj.id
+            ).first()
+
+            if not rec:
+                rec = AttendanceRecord(
+                    session_id=session.id,
+                    student_id=student_obj.id,
+                    device_id=None,
+                    timestamp=datetime.datetime.combine(lec_date, co_entry.start_time),
+                    status=att_status,
+                    source=AttendanceSource.QR_SCAN.value if att_status == "PRESENT" else AttendanceSource.MANUAL_FACULTY.value,
+                    remarks="Restored from attendance sheet" if att_status == "PRESENT" else "Auto-marked absent"
+                )
+                db.add(rec)
+            else:
+                rec.status = att_status
+
+        db.commit()
+
     print("Database seeding completed successfully!")
