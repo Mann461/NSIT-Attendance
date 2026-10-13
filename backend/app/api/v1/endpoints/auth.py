@@ -74,17 +74,25 @@ def login(
 
     token = create_access_token({"sub": str(user.id), "role": user.role})
 
-    # Ensure device token exists in cookies
-    device_token = request.cookies.get("smartattend_device_id")
-    if not device_token:
-        device_token = generate_device_token()
-        response.set_cookie(
-            key="smartattend_device_id",
-            value=device_token,
-            max_age=365*24*3600,
-            httponly=True,
-            samesite="lax"
-        )
+    # Device handling on login:
+    # Do NOT blindly issue or rebind device tokens on login.
+    # If the student has an active trusted device and presents it, refresh the cookie.
+    # Otherwise, device registration occurs via the dedicated /devices/register endpoint.
+    if user.role == UserRole.STUDENT.value and user.student_profile:
+        student = user.student_profile
+        active_dev = db.query(Device).filter(
+            Device.student_id == student.id,
+            Device.status == "ACTIVE"
+        ).first()
+        incoming_token = request.cookies.get("smartattend_device_id")
+        if active_dev and incoming_token == active_dev.device_token:
+            response.set_cookie(
+                key="smartattend_device_id",
+                value=active_dev.device_token,
+                max_age=365*24*3600,
+                httponly=True,
+                samesite="lax"
+            )
 
     response.set_cookie(
         key="smartattend_session",

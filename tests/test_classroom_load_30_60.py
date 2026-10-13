@@ -71,18 +71,23 @@ def create_fresh_test_session(duration_minutes=30):
         db.flush()
 
         import secrets
+        from datetime import timedelta
         token = f"load_tok_{secrets.token_hex(16)}"
+        now = utc_now()
         sess = AttendanceSession(
             scheduled_lecture_id=lec.id,
             token=token,
             status=SessionStatus.ACTIVE.value,
-            opened_at=utc_now(),
-            duration_minutes=duration_minutes
+            opened_at=now,
+            duration_minutes=duration_minutes,
+            presence_code="1234",
+            presence_code_expires_at=now + timedelta(minutes=duration_minutes),
+            presence_challenge_required=True
         )
         db.add(sess)
         db.commit()
         db.refresh(sess)
-        return sess.id, sess.token
+        return sess.id, sess.token, sess.presence_code
     finally:
         db.close()
 
@@ -95,22 +100,43 @@ def calculate_percentiles(latencies):
     p99_idx = min(len(sorted_lats) - 1, math.ceil(0.99 * len(sorted_lats)) - 1)
     return avg_lat, sorted_lats[p95_idx], sorted_lats[p99_idx], sorted_lats[-1]
 
-def run_burst_test(session_id, session_token, student_count, target_duration_sec, workers=15):
+def run_burst_test(session_id, session_token, student_count, target_duration_sec, workers=15, presence_code="1234"):
     db = SessionLocal()
+    from app.models.schema import Device, DeviceResetLog, DeviceStatus
+    from app.auth.security import hash_device_secret
     students = db.query(Student).filter(Student.class_id == 1).limit(student_count).all()
-    # Pre-generate tokens and headers
+    student_ids = [s.id for s in students]
+    db.query(DeviceResetLog).filter(DeviceResetLog.student_id.in_(student_ids)).delete(synchronize_session=False)
+    db.query(Device).filter(Device.student_id.in_(student_ids)).delete(synchronize_session=False)
+    db.commit()
+
+    # Pre-generate tokens, trusted devices, and headers
     student_data = []
+    now = utc_now()
     for s in students:
         u = s.user
         jwt_tok = create_access_token(data={"sub": str(u.id), "email": u.email, "role": u.role})
+        dev_token = f"dev_load_{s.id}_{session_id}"
+        dev_secret = f"secret_load_{s.id}"
+        dev_rec = Device(
+            student_id=s.id,
+            device_token=dev_token,
+            device_secret_hash=hash_device_secret(dev_secret),
+            status=DeviceStatus.ACTIVE.value,
+            registered_at=now
+        )
+        db.add(dev_rec)
         student_data.append({
             "student_id": s.id,
             "headers": {"Authorization": f"Bearer {jwt_tok}"},
             "payload": {
                 "session_token": session_token,
-                "device_token": f"dev_load_{s.id}_{session_id}"
+                "device_token": dev_token,
+                "device_secret": dev_secret,
+                "presence_code": presence_code
             }
         })
+    db.commit()
     db.close()
 
     attendance_rate_limiter.reset()
@@ -187,10 +213,14 @@ def run_burst_test(session_id, session_token, student_count, target_duration_sec
 def cleanup_load_students():
     db = SessionLocal()
     try:
+        from app.models.schema import Device, DeviceResetLog
         load_students = db.query(Student).filter(Student.enrollment_no.like("991943004%")).all()
+        s_ids = [s.id for s in load_students]
         user_ids = [s.user_id for s in load_students]
+        db.query(DeviceResetLog).filter(DeviceResetLog.student_id.in_(s_ids)).delete(synchronize_session=False)
+        db.query(Device).filter(Device.student_id.in_(s_ids)).delete(synchronize_session=False)
+        db.query(AttendanceRecord).filter(AttendanceRecord.student_id.in_(s_ids)).delete(synchronize_session=False)
         for s in load_students:
-            db.query(AttendanceRecord).filter(AttendanceRecord.student_id == s.id).delete()
             db.delete(s)
         db.commit()
         for uid in user_ids:
@@ -208,8 +238,8 @@ def test_classroom_load_suite():
         print("="*80)
 
         # --- TEST A: 30 Students within ~10s ---
-        sess_id_a, sess_tok_a = create_fresh_test_session()
-        res_a = run_burst_test(sess_id_a, sess_tok_a, student_count=30, target_duration_sec=8.0, workers=5)
+        sess_id_a, sess_tok_a, pcode_a = create_fresh_test_session()
+        res_a = run_burst_test(sess_id_a, sess_tok_a, student_count=30, target_duration_sec=8.0, workers=5, presence_code=pcode_a)
         print(f"\n[TEST A] 30 Students in ~10s:")
         for k, v in res_a.items():
             print(f"  {k}: {v}")
@@ -219,8 +249,8 @@ def test_classroom_load_suite():
         assert res_a["rate_limit_errors"] == 0
 
         # --- TEST B: 60 Students within ~10s ---
-        sess_id_b, sess_tok_b = create_fresh_test_session()
-        res_b = run_burst_test(sess_id_b, sess_tok_b, student_count=60, target_duration_sec=8.0, workers=10)
+        sess_id_b, sess_tok_b, pcode_b = create_fresh_test_session()
+        res_b = run_burst_test(sess_id_b, sess_tok_b, student_count=60, target_duration_sec=8.0, workers=10, presence_code=pcode_b)
         print(f"\n[TEST B] 60 Students in ~10s:")
         for k, v in res_b.items():
             print(f"  {k}: {v}")
@@ -230,8 +260,8 @@ def test_classroom_load_suite():
         assert res_b["rate_limit_errors"] == 0
 
         # --- TEST C: 60 Students within ~2-5s (High Concurrency Burst) ---
-        sess_id_c, sess_tok_c = create_fresh_test_session()
-        res_c = run_burst_test(sess_id_c, sess_tok_c, student_count=60, target_duration_sec=1.5, workers=20)
+        sess_id_c, sess_tok_c, pcode_c = create_fresh_test_session()
+        res_c = run_burst_test(sess_id_c, sess_tok_c, student_count=60, target_duration_sec=1.5, workers=20, presence_code=pcode_c)
         print(f"\n[TEST C] 60 Students in 2-5s burst:")
         for k, v in res_c.items():
             print(f"  {k}: {v}")

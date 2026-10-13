@@ -102,11 +102,26 @@ export default function ProjectorModePage() {
 
       {/* Main Center Display */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center my-auto py-8 max-w-6xl mx-auto w-full">
-        {/* QR Code Presentation Box */}
-        <div className="flex flex-col items-center justify-center w-full">
-          <AttendanceQRCode token={details?.token} size={320} />
-          <p className="text-xs text-slate-400 font-mono mt-3 font-bold tracking-widest uppercase text-center">
-            SCAN QR WITH YOUR PHONE CAMERA
+        {/* QR Code Presentation Box with Classroom Presence PIN */}
+        <div className="flex flex-col items-center justify-center w-full space-y-4">
+          <AttendanceQRCode token={details?.token} size={300} />
+
+          {details?.presence_code && (
+            <div className="w-full max-w-sm bg-gradient-to-r from-amber-500/20 via-orange-500/20 to-amber-500/20 border-2 border-amber-500/40 rounded-2xl p-4 text-center shadow-lg backdrop-blur-md">
+              <span className="text-[11px] font-bold text-amber-300 uppercase tracking-widest block mb-1">
+                Classroom Presence Code (Anti-Proxy)
+              </span>
+              <div className="text-4xl font-mono font-black tracking-[0.3em] text-white bg-slate-950/70 py-2 rounded-xl border border-amber-500/30">
+                {details.presence_code}
+              </div>
+              <p className="text-[11px] text-slate-300 mt-2 font-medium">
+                Students must enter this 4-digit code on their trusted phones to verify presence in Room 109
+              </p>
+            </div>
+          )}
+
+          <p className="text-xs text-slate-400 font-mono mt-1 font-bold tracking-widest uppercase text-center">
+            SCAN QR WITH YOUR REGISTERED PHONE CAMERA
           </p>
         </div>
 

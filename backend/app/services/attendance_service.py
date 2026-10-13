@@ -7,9 +7,12 @@ from app.database import utc_now
 from app.models.schema import (
     ScheduledLecture, LectureStatus, AttendanceSession, SessionStatus,
     AttendanceRecord, AttendanceStatus, AttendanceSource, Student, Device,
-    AuditLog, Class
+    DeviceStatus, AuditLog, Class
 )
-from app.auth.security import generate_secure_session_token, generate_device_token, verify_rotating_qr_token
+from app.auth.security import (
+    generate_secure_session_token, generate_device_token, verify_rotating_qr_token,
+    generate_presence_code, verify_presence_code, verify_device_secret
+)
 from app.websocket.manager import ws_manager
 
 async def confirm_lecture(
@@ -63,20 +66,30 @@ async def start_attendance_session(db: Session, lecture_id: int, duration_minute
     if lecture.status not in [LectureStatus.CONFIRMED.value, LectureStatus.ACTIVE.value, LectureStatus.SCHEDULED.value]:
         raise HTTPException(status_code=400, detail=f"Cannot start attendance for lecture with status {lecture.status}")
 
+    now = utc_now()
+    presence_code = generate_presence_code(4)
+    presence_expires = now + datetime.timedelta(minutes=duration_minutes)
+
     # Check if session already exists
     if lecture.attendance_session:
         session = lecture.attendance_session
         session.status = SessionStatus.ACTIVE.value
-        session.opened_at = utc_now()
+        session.opened_at = now
         session.duration_minutes = duration_minutes
+        session.presence_code = presence_code
+        session.presence_code_expires_at = presence_expires
+        session.presence_challenge_required = True
     else:
         token = generate_secure_session_token()
         session = AttendanceSession(
             scheduled_lecture_id=lecture.id,
             token=token,
             status=SessionStatus.ACTIVE.value,
-            opened_at=utc_now(),
-            duration_minutes=duration_minutes
+            opened_at=now,
+            duration_minutes=duration_minutes,
+            presence_code=presence_code,
+            presence_code_expires_at=presence_expires,
+            presence_challenge_required=True
         )
         db.add(session)
 
@@ -87,12 +100,41 @@ async def start_attendance_session(db: Session, lecture_id: int, duration_minute
         action="ATTENDANCE_SESSION_STARTED",
         entity="AttendanceSession",
         entity_id=str(session.id if session.id else "new"),
-        details=f"Duration: {duration_minutes} mins"
+        details=f"Duration: {duration_minutes} mins; Classroom Code generated"
     )
     db.add(audit)
     db.commit()
     db.refresh(session)
     db.refresh(lecture)
+    return session
+
+async def rotate_session_presence_code(db: Session, session_id: int, user_id: int = None):
+    session = db.query(AttendanceSession).filter(AttendanceSession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Attendance session not found")
+    if session.status != SessionStatus.ACTIVE.value:
+        raise HTTPException(status_code=400, detail="Attendance session is not active")
+
+    now = utc_now()
+    new_code = generate_presence_code(4)
+    session.presence_code = new_code
+    session.presence_code_expires_at = now + datetime.timedelta(minutes=session.duration_minutes)
+
+    audit = AuditLog(
+        user_id=user_id,
+        action="PRESENCE_CODE_ROTATED",
+        entity="AttendanceSession",
+        entity_id=str(session.id),
+        details="Rotated classroom presence challenge code"
+    )
+    db.add(audit)
+    db.commit()
+    db.refresh(session)
+
+    await ws_manager.broadcast_attendance_update(session.id, {
+        "type": "PRESENCE_CODE_ROTATED",
+        "presence_code": new_code
+    })
     return session
 
 async def close_attendance_session(db: Session, session_id: int, user_id: int = None):
@@ -146,8 +188,11 @@ async def mark_student_attendance(
     db: Session,
     session_token: str,
     student_user_id: int,
-    device_token: str,
-    user_agent: str = None
+    device_token: str = None,
+    device_secret: str = None,
+    presence_code: str = None,
+    user_agent: str = None,
+    client_ip: str = None
 ):
     session = None
     if session_token.startswith("rot_"):
@@ -183,20 +228,99 @@ async def mark_student_attendance(
     if student.class_id != lecture_class_id:
         raise HTTPException(status_code=403, detail="You are not enrolled in this class.")
 
-    # Look up or create Device
-    if not device_token:
-        device_token = generate_device_token()
-
-    device = db.query(Device).filter(Device.device_token == device_token).first()
-    if not device:
-        try:
-            device = Device(device_token=device_token, user_agent=user_agent)
-            db.add(device)
+    # -------------------------------------------------------------
+    # Anti-Proxy Layer 1: Classroom Presence Challenge Validation
+    # -------------------------------------------------------------
+    if session.presence_code and getattr(session, "presence_challenge_required", True):
+        # Check expiration
+        if session.presence_code_expires_at and now > session.presence_code_expires_at:
+            raise HTTPException(
+                status_code=400,
+                detail="Classroom presence challenge has expired. Please check the current code on the classroom display."
+            )
+        # Verify presence challenge timing-safe
+        if not presence_code or not verify_presence_code(presence_code, session.presence_code):
+            audit = AuditLog(
+                user_id=student_user_id,
+                action="SUSPICIOUS_PRESENCE_CHALLENGE_FAILED",
+                entity="AttendanceSession",
+                entity_id=str(session.id),
+                details=f"Invalid classroom presence challenge entered for student {student.enrollment_no}",
+                ip_address=client_ip
+            )
+            db.add(audit)
             db.commit()
-            db.refresh(device)
-        except IntegrityError:
-            db.rollback()
-            device = db.query(Device).filter(Device.device_token == device_token).first()
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid classroom presence code. Please enter the code displayed on the classroom screen."
+            )
+
+    # -------------------------------------------------------------
+    # Anti-Proxy Layer 2: Trusted-Device Ownership Validation
+    # -------------------------------------------------------------
+    student_device = db.query(Device).filter(
+        Device.student_id == student.id,
+        Device.status == DeviceStatus.ACTIVE.value
+    ).first()
+
+    if not student_device:
+        revoked = db.query(Device).filter(
+            Device.student_id == student.id,
+            Device.status == DeviceStatus.REVOKED.value
+        ).first()
+        if revoked:
+            raise HTTPException(
+                status_code=403,
+                detail="Your previous trusted device registration was revoked. Please register your replacement phone."
+            )
+        raise HTTPException(
+            status_code=403,
+            detail="No trusted phone registered for this student account. Please register your device before marking attendance."
+        )
+
+    if not device_token:
+        raise HTTPException(
+            status_code=400,
+            detail="Device identifier missing. Attendance requires your registered trusted phone."
+        )
+
+    # Verify device_token matches student's registered active device
+    if device_token != student_device.device_token:
+        audit = AuditLog(
+            user_id=student_user_id,
+            action="UNTRUSTED_DEVICE_ATTENDANCE_BLOCKED",
+            entity="AttendanceSession",
+            entity_id=str(session.id),
+            details=f"Device mismatch for student {student.enrollment_no}. Provided token does not match registered device.",
+            ip_address=client_ip
+        )
+        db.add(audit)
+        db.commit()
+        raise HTTPException(
+            status_code=403,
+            detail="Device mismatch: This device is not registered to your student account. Replacing your phone requires faculty authorization."
+        )
+
+    # Verify cryptographic secret if device was bound with secret
+    if student_device.device_secret_hash:
+        if not device_secret or not verify_device_secret(device_secret, student_device.device_secret_hash):
+            audit = AuditLog(
+                user_id=student_user_id,
+                action="DEVICE_SECRET_VERIFICATION_FAILED",
+                entity="AttendanceSession",
+                entity_id=str(session.id),
+                details=f"Cryptographic device secret validation failed for student {student.enrollment_no}",
+                ip_address=client_ip
+            )
+            db.add(audit)
+            db.commit()
+            raise HTTPException(
+                status_code=403,
+                detail="Device authentication failed: Invalid device credential. Attendance rejected."
+            )
+
+    student_device.last_used_at = now
+    device = student_device
 
     # Check 1: Has student already marked attendance for this session?
     existing_student_record = db.query(AttendanceRecord).filter(
@@ -229,7 +353,8 @@ async def mark_student_attendance(
             action="PROXY_ATTENDANCE_ATTEMPT",
             entity="AttendanceSession",
             entity_id=str(session.id),
-            details=f"Device {device_token} already used by another student."
+            details=f"Device {device_token} already used by another student in session {session.id}.",
+            ip_address=client_ip
         )
         db.add(audit)
         db.commit()

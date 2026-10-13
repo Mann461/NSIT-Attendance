@@ -16,7 +16,7 @@ from app.schemas.pydantic_models import (
 )
 from app.services.attendance_service import (
     confirm_lecture, start_attendance_session, close_attendance_session,
-    mark_student_attendance, edit_student_attendance
+    mark_student_attendance, edit_student_attendance, rotate_session_presence_code
 )
 from app.services.rate_limiter import (
     attendance_rate_limiter, USER_MAX_REQUESTS, USER_WINDOW_SECONDS,
@@ -68,7 +68,9 @@ async def api_start_attendance(
         "session_id": session.id,
         "token": session.token,
         "duration_minutes": session.duration_minutes,
-        "status": session.status
+        "status": session.status,
+        "presence_code": session.presence_code,
+        "presence_code_expires_at": session.presence_code_expires_at.isoformat() if session.presence_code_expires_at else None
     }
 
 @router.post("/session/{session_id}/close")
@@ -129,7 +131,7 @@ def api_get_session_details(
     expires_at = session.opened_at + datetime.timedelta(minutes=session.duration_minutes) if session.opened_at else None
     remaining_seconds = max(0, int((expires_at - utc_now()).total_seconds())) if expires_at and session.status == "ACTIVE" else 0
 
-    return {
+    details_dict = {
         "session_id": session.id,
         "token": session.token,
         "status": session.status,
@@ -153,6 +155,29 @@ def api_get_session_details(
             "percentage": round((present_count / len(all_students) * 100), 1) if all_students else 0.0
         },
         "students": student_list
+    }
+
+    if current_user.role in [UserRole.FACULTY.value, UserRole.ADMIN.value]:
+        details_dict["presence_code"] = session.presence_code
+        details_dict["presence_code_expires_at"] = session.presence_code_expires_at.isoformat() if session.presence_code_expires_at else None
+
+    return details_dict
+
+@router.post("/session/{session_id}/presence-code/rotate")
+async def api_rotate_presence_code(
+    session_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    if current_user.role not in [UserRole.FACULTY.value, UserRole.ADMIN.value]:
+        raise HTTPException(status_code=403, detail="Only faculty/admin can rotate presence challenge code.")
+
+    session = await rotate_session_presence_code(db=db, session_id=session_id, user_id=current_user.id)
+    return {
+        "message": "Classroom presence code rotated successfully",
+        "session_id": session.id,
+        "presence_code": session.presence_code,
+        "presence_code_expires_at": session.presence_code_expires_at.isoformat() if session.presence_code_expires_at else None
     }
 
 @router.post("/mark")
@@ -193,7 +218,9 @@ async def api_mark_attendance(
             headers={"Retry-After": ip_retry_val}
         )
 
-    device_token = req.device_token or request.cookies.get("smartattend_device_id")
+    device_token = req.device_token or request.headers.get("X-Device-Token") or request.cookies.get("smartattend_device_id")
+    device_secret = req.device_secret or request.headers.get("X-Device-Secret") or request.cookies.get("smartattend_device_secret")
+    presence_code = req.presence_code or request.headers.get("X-Presence-Code")
     user_agent = request.headers.get("user-agent")
 
     res = await mark_student_attendance(
@@ -201,7 +228,10 @@ async def api_mark_attendance(
         session_token=req.session_token,
         student_user_id=current_user.id,
         device_token=device_token,
-        user_agent=user_agent
+        device_secret=device_secret,
+        presence_code=presence_code,
+        user_agent=user_agent,
+        client_ip=client_ip
     )
 
     if res.get("device_token"):

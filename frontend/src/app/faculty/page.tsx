@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import {
   QrCode, Calendar, Clock, CheckCircle2, XCircle, RefreshCw, AlertTriangle,
   Play, StopCircle, Edit3, Download, Maximize2, LogOut, FileSpreadsheet,
-  UserCheck, Search, X, ChevronRight, User, Sparkles
+  UserCheck, Search, X, ChevronRight, User, Sparkles, Smartphone, KeyRound, ShieldAlert
 } from "lucide-react";
 
 import { API_BASE_URL, getWsUrl } from "@/config";
@@ -23,6 +23,11 @@ export default function FacultyDashboard() {
   const [showRescheduleModal, setShowRescheduleModal] = useState(false);
   const [showSessionModal, setShowSessionModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
+  const [showResetModal, setShowResetModal] = useState(false);
+  const [targetStudentForReset, setTargetStudentForReset] = useState<any>(null);
+  const [resetReason, setResetReason] = useState("Student changed/lost device");
+  const [resetLoading, setResetLoading] = useState(false);
+  const [resetSuccessMessage, setResetSuccessMessage] = useState("");
 
   // Form states
   const [cancelReason, setCancelReason] = useState("Faculty unavailable");
@@ -199,6 +204,41 @@ export default function FacultyDashboard() {
       fetchSessionDetails(sessionId);
     } catch (err) {
       console.error(err);
+    }
+  };
+
+  const handleAuthorizeDeviceReset = async () => {
+    if (!targetStudentForReset) return;
+    setResetLoading(true);
+    setResetSuccessMessage("");
+    const token = localStorage.getItem("smartattend_token");
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/v1/devices/reset`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          student_id: targetStudentForReset.id,
+          reason: resetReason
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.detail || "Failed to reset student device");
+      } else {
+        setResetSuccessMessage(`Device reset authorized for ${targetStudentForReset.name}. The student can now register a replacement phone.`);
+        setTimeout(() => {
+          setShowResetModal(false);
+          setTargetStudentForReset(null);
+          setResetSuccessMessage("");
+        }, 2000);
+      }
+    } catch (err: any) {
+      alert("Network error authorizing device reset");
+    } finally {
+      setResetLoading(false);
     }
   };
 
@@ -661,6 +701,21 @@ export default function FacultyDashboard() {
               </div>
             </div>
 
+            {/* Classroom Presence Code Display */}
+            {sessionDetails.presence_code && (
+              <div className="bg-gradient-to-r from-amber-500/10 via-orange-500/10 to-amber-500/10 border border-amber-500/30 rounded-xl p-3 text-center">
+                <span className="text-[10px] font-bold text-amber-400 uppercase tracking-widest block">
+                  Classroom Presence Code (Anti-Proxy PIN)
+                </span>
+                <span className="text-2xl font-mono font-black text-amber-300 tracking-[0.25em] block my-0.5">
+                  {sessionDetails.presence_code}
+                </span>
+                <span className="text-[10px] text-slate-400">
+                  Students must enter this 4-digit code on their trusted phones
+                </span>
+              </div>
+            )}
+
             {/* QR & Counter Grid */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-center">
               {/* QR Display */}
@@ -756,15 +811,88 @@ export default function FacultyDashboard() {
                       </span>
                     </div>
 
-                    <button
-                      onClick={() => handleManualEditStatus(sessionDetails.session_id, st.id, st.status === "PRESENT" ? "ABSENT" : "PRESENT")}
-                      className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 active:scale-95 text-xs text-blue-400 font-semibold rounded-lg border border-slate-700 whitespace-nowrap"
-                    >
-                      Make {st.status === "PRESENT" ? "Absent" : "Present"}
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => handleManualEditStatus(sessionDetails.session_id, st.id, st.status === "PRESENT" ? "ABSENT" : "PRESENT")}
+                        className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 active:scale-95 text-xs text-blue-400 font-semibold rounded-lg border border-slate-700 whitespace-nowrap"
+                      >
+                        Make {st.status === "PRESENT" ? "Absent" : "Present"}
+                      </button>
+
+                      <button
+                        onClick={() => {
+                          setTargetStudentForReset(st);
+                          setResetReason("Student replaced/lost phone");
+                          setResetSuccessMessage("");
+                          setShowResetModal(true);
+                        }}
+                        className="px-2.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-amber-400 font-semibold rounded-lg border border-amber-500/30 whitespace-nowrap flex items-center gap-1"
+                        title="Reset trusted phone registration"
+                      >
+                        <Smartphone className="w-3.5 h-3.5" />
+                        <span className="hidden sm:inline">Reset Phone</span>
+                      </button>
+                    </div>
                   </div>
                 ))}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 5: Authorize Device Reset Modal */}
+      {showResetModal && targetStudentForReset && (
+        <div className="fixed inset-0 bg-slate-950/90 backdrop-blur-md z-50 flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <Smartphone className="w-5 h-5 text-amber-400" />
+                <h3 className="text-base font-bold text-white">Authorize Phone Replacement</h3>
+              </div>
+              <button
+                onClick={() => { setShowResetModal(false); setTargetStudentForReset(null); }}
+                className="text-slate-400 hover:text-white"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-300">
+              Revoking the registered phone for <strong className="text-white">{targetStudentForReset.name}</strong> (Roll #{targetStudentForReset.roll_no}). The previous device will immediately be untrusted, allowing the student to register their replacement phone.
+            </p>
+
+            <div className="space-y-1 text-left">
+              <label className="text-xs font-semibold text-slate-300">Reason for Reset (Required)</label>
+              <input
+                type="text"
+                value={resetReason}
+                onChange={(e) => setResetReason(e.target.value)}
+                placeholder="e.g. Lost handset / switched to new phone"
+                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white"
+              />
+            </div>
+
+            {resetSuccessMessage ? (
+              <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs rounded-xl font-medium">
+                {resetSuccessMessage}
+              </div>
+            ) : (
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  onClick={() => { setShowResetModal(false); setTargetStudentForReset(null); }}
+                  className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-xs font-semibold rounded-xl text-slate-300"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleAuthorizeDeviceReset}
+                  disabled={resetLoading || !resetReason.trim()}
+                  className="px-4 py-2 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-xs font-bold rounded-xl text-white shadow"
+                >
+                  {resetLoading ? "Authorizing..." : "Revoke & Allow Replacement"}
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}

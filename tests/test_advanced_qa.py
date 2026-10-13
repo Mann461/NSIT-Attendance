@@ -141,23 +141,44 @@ def test_burst_concurrent_load():
         session_id = r_start.json()["session_id"]
 
         students = db.query(Student).filter(Student.class_id == 1).all()
-        assert len(students) == 33
+        presence_code = r_start.json().get("presence_code")
 
-        def student_scan_worker(student):
+        # Clear existing devices for these students to allow fresh enrollment in test
+        from app.models.schema import Device, DeviceResetLog
+        student_ids = [s.id for s in students]
+        db.query(DeviceResetLog).filter(DeviceResetLog.student_id.in_(student_ids)).delete(synchronize_session=False)
+        db.query(Device).filter(Device.student_id.in_(student_ids)).delete(synchronize_session=False)
+        db.commit()
+
+        from app.services.rate_limiter import attendance_rate_limiter
+        attendance_rate_limiter.reset()
+
+        # Pre-extract student attributes as plain python dicts to avoid cross-thread session access
+        student_data = [{"enrollment_no": s.enrollment_no, "roll_no": s.roll_no} for s in students]
+
+        def student_scan_worker(item):
             thread_client = TestClient(app)
-            r_auth = thread_client.post("/api/v1/auth/login", json={"email_or_enrollment": student.enrollment_no, "password": "Student@123"})
+            r_auth = thread_client.post("/api/v1/auth/login", json={"email_or_enrollment": item["enrollment_no"], "password": "Student@123"})
             token = r_auth.json()["access_token"]
-            device_token = f"dev_concurrent_{student.roll_no}"
+            device_token = f"dev_concurrent_{item['roll_no']}"
+            hdr = {"Authorization": f"Bearer {token}"}
+            r_reg = thread_client.post("/api/v1/devices/register", json={"device_token": device_token}, headers=hdr)
+            device_secret = r_reg.json().get("device_secret") if r_reg.status_code == 200 else None
             r_mark = thread_client.post(
                 "/api/v1/attendance/mark",
-                json={"session_token": session_token, "device_token": device_token},
-                headers={"Authorization": f"Bearer {token}"}
+                json={
+                    "session_token": session_token,
+                    "device_token": device_token,
+                    "device_secret": device_secret,
+                    "presence_code": presence_code
+                },
+                headers=hdr
             )
-            return (student.roll_no, r_mark.status_code, r_mark.json())
+            return (item["roll_no"], r_mark.status_code, r_mark.json())
 
         # Execute 33 simultaneous scans
         with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-            results = list(executor.map(student_scan_worker, students))
+            results = list(executor.map(student_scan_worker, student_data))
 
         successful_scans = [r for r in results if r[1] == 200 and r[2].get("status") == "SUCCESS"]
         assert len(successful_scans) == 33, f"Expected 33 successful scans, got {len(successful_scans)}"
