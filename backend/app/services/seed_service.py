@@ -106,12 +106,13 @@ def seed_database(db: Session):
     ]
 
     faculty_map = {}
+    faculty_pwd_hash = hash_password("Faculty@123")
     for email, name, code, dept, abbrev in faculty_members:
         u = db.query(User).filter(User.email == email).first()
         if not u:
             u = User(
                 email=email,
-                password_hash=hash_password("Faculty@123"),
+                password_hash=faculty_pwd_hash,
                 full_name=name,
                 role=UserRole.FACULTY.value
             )
@@ -159,13 +160,14 @@ def seed_database(db: Session):
 
     # 5. Students (33 students)
     student_objs = []
+    student_pwd_hash = hash_password("Student@123")
     for enroll, roll, name in STUDENT_SEED_DATA:
         email = f"student{roll}@nsit.ac.in"
         u = db.query(User).filter(User.email == email).first()
         if not u:
             u = User(
                 email=email,
-                password_hash=hash_password("Student@123"),
+                password_hash=student_pwd_hash,
                 full_name=name,
                 role=UserRole.STUDENT.value
             )

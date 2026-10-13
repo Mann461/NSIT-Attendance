@@ -14,18 +14,23 @@ from app.models.schema import User, UserRole, AttendanceSession
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    print(">> SmartAttend initializing database...", flush=True)
     try:
         Base.metadata.create_all(bind=engine)
+        print(">> Database tables verified.", flush=True)
         db = SessionLocal()
         try:
             seed_database(db)
+            print(">> Database seeding verified.", flush=True)
         except Exception as seed_err:
-            print(f"Startup warning during database seeding: {seed_err}")
+            print(f">> Startup warning during database seeding: {seed_err}", flush=True)
         finally:
             db.close()
     except Exception as db_err:
-        print(f"Startup warning during database initialization: {db_err}")
+        print(f">> Startup warning during database initialization: {db_err}", flush=True)
+    print(">> SmartAttend startup complete. Ready to serve requests.", flush=True)
     yield
+    print(">> SmartAttend shutting down.", flush=True)
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
