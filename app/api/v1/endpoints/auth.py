@@ -1,0 +1,118 @@
+from fastapi import APIRouter, Depends, HTTPException, status, Response, Request, Header
+from sqlalchemy.orm import Session
+from typing import Optional
+
+from app.database import get_db
+from app.models.schema import User, Student, UserRole, Device
+from app.schemas.pydantic_models import LoginRequest, TokenResponse, UserResponse
+from app.auth.security import (
+    verify_password, verify_and_check_rehash, hash_password,
+    create_access_token, decode_access_token, generate_device_token
+)
+
+router = APIRouter()
+
+def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
+    auth_header = request.headers.get("Authorization")
+    token = None
+    if auth_header and auth_header.startswith("Bearer "):
+        token = auth_header.split(" ")[1]
+    elif "token" in request.query_params:
+        token = request.query_params.get("token")
+    else:
+        token = request.cookies.get("smartattend_session")
+
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required"
+        )
+
+    payload = decode_access_token(token)
+    if not payload or "sub" not in payload:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired session token"
+        )
+
+    user_id = int(payload["sub"])
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found"
+        )
+    return user
+
+@router.post("/login", response_model=TokenResponse)
+def login(
+    req: LoginRequest,
+    response: Response,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    query_str = req.email_or_enrollment.strip()
+
+    # Try matching email or enrollment number
+    user = db.query(User).filter(User.email == query_str).first()
+    if not user:
+        student = db.query(Student).filter(Student.enrollment_no == query_str).first()
+        if student:
+            user = student.user
+
+    is_valid, needs_rehash = verify_and_check_rehash(req.password, user.password_hash) if user else (False, False)
+    if not user or not is_valid:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials. Please check your username/password."
+        )
+
+    # Automatic transparent migration from legacy hash to Bcrypt
+    if needs_rehash:
+        user.password_hash = hash_password(req.password)
+        db.commit()
+
+    token = create_access_token({"sub": str(user.id), "role": user.role})
+
+    # Device handling on login:
+    # Do NOT blindly issue or rebind device tokens on login.
+    # If the student has an active trusted device and presents it, refresh the cookie.
+    # Otherwise, device registration occurs via the dedicated /devices/register endpoint.
+    if user.role == UserRole.STUDENT.value and user.student_profile:
+        student = user.student_profile
+        active_dev = db.query(Device).filter(
+            Device.student_id == student.id,
+            Device.status == "ACTIVE"
+        ).first()
+        incoming_token = request.cookies.get("smartattend_device_id")
+        if active_dev and incoming_token == active_dev.device_token:
+            response.set_cookie(
+                key="smartattend_device_id",
+                value=active_dev.device_token,
+                max_age=365*24*3600,
+                httponly=True,
+                samesite="lax"
+            )
+
+    response.set_cookie(
+        key="smartattend_session",
+        value=token,
+        max_age=7*24*3600,
+        httponly=True,
+        samesite="lax"
+    )
+
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "user": user
+    }
+
+@router.get("/me", response_model=UserResponse)
+def get_me(current_user: User = Depends(get_current_user)):
+    return current_user
+
+@router.post("/logout")
+def logout(response: Response):
+    response.delete_cookie("smartattend_session")
+    return {"message": "Successfully logged out"}

@@ -1,0 +1,324 @@
+import os
+import io
+import datetime
+from urllib.parse import urlparse
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, Header
+from fastapi.responses import StreamingResponse
+from sqlalchemy.orm import Session
+from typing import Optional
+import qrcode
+
+from app.database import get_db, utc_now
+from app.api.v1.endpoints.auth import get_current_user
+from app.models.schema import User, UserRole, AttendanceSession, ScheduledLecture, Student, AttendanceRecord, AttendanceStatus
+from app.schemas.pydantic_models import (
+    LectureConfirmRequest, StartAttendanceRequest, MarkAttendanceRequest, EditAttendanceRequest
+)
+from app.services.attendance_service import (
+    confirm_lecture, start_attendance_session, close_attendance_session,
+    mark_student_attendance, edit_student_attendance, rotate_session_presence_code
+)
+from app.services.rate_limiter import (
+    attendance_rate_limiter, USER_MAX_REQUESTS, USER_WINDOW_SECONDS,
+    IP_MAX_REQUESTS, IP_WINDOW_SECONDS
+)
+
+router = APIRouter()
+
+@router.post("/lecture/{lecture_id}/confirm")
+async def api_confirm_lecture(
+    lecture_id: int,
+    req: LectureConfirmRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    if current_user.role not in [UserRole.FACULTY.value, UserRole.ADMIN.value]:
+        raise HTTPException(status_code=403, detail="Only faculty/admin can confirm lectures.")
+
+    lecture = await confirm_lecture(
+        db=db,
+        lecture_id=lecture_id,
+        status_str=req.status,
+        cancel_reason=req.cancel_reason,
+        rescheduled_date_str=req.rescheduled_date,
+        rescheduled_start_str=req.rescheduled_start,
+        rescheduled_end_str=req.rescheduled_end,
+        user_id=current_user.id
+    )
+    return {"message": f"Lecture status updated to {lecture.status}", "lecture_id": lecture.id, "status": lecture.status}
+
+@router.post("/lecture/{lecture_id}/start")
+async def api_start_attendance(
+    lecture_id: int,
+    req: StartAttendanceRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    if current_user.role not in [UserRole.FACULTY.value, UserRole.ADMIN.value]:
+        raise HTTPException(status_code=403, detail="Only faculty/admin can start attendance sessions.")
+
+    session = await start_attendance_session(
+        db=db,
+        lecture_id=lecture_id,
+        duration_minutes=req.duration_minutes,
+        user_id=current_user.id
+    )
+    return {
+        "message": "Attendance session started",
+        "session_id": session.id,
+        "token": session.token,
+        "duration_minutes": session.duration_minutes,
+        "status": session.status,
+        "presence_code": session.presence_code,
+        "presence_code_expires_at": session.presence_code_expires_at.isoformat() if session.presence_code_expires_at else None
+    }
+
+@router.post("/session/{session_id}/close")
+async def api_close_attendance(
+    session_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    if current_user.role not in [UserRole.FACULTY.value, UserRole.ADMIN.value]:
+        raise HTTPException(status_code=403, detail="Only faculty/admin can close attendance sessions.")
+
+    session = await close_attendance_session(db=db, session_id=session_id, user_id=current_user.id)
+    return {"message": "Attendance session closed successfully", "session_id": session.id, "status": session.status}
+
+@router.get("/session/{token_or_id}/details")
+def api_get_session_details(
+    token_or_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    session = None
+    if token_or_id.isdigit():
+        session = db.query(AttendanceSession).filter(AttendanceSession.id == int(token_or_id)).first()
+    else:
+        session = db.query(AttendanceSession).filter(AttendanceSession.token == token_or_id).first()
+
+    if not session:
+        raise HTTPException(status_code=404, detail="Attendance session not found.")
+
+    lecture = session.scheduled_lecture
+    timetable = lecture.timetable_entry
+    class_id = timetable.class_id
+
+    all_students = db.query(Student).filter(Student.class_id == class_id).order_by(Student.roll_no).all()
+    records = db.query(AttendanceRecord).filter(AttendanceRecord.session_id == session.id).all()
+    record_map = {r.student_id: r for r in records}
+
+    student_list = []
+    present_count = 0
+
+    for st in all_students:
+        rec = record_map.get(st.id)
+        st_status = rec.status if rec else ("ABSENT" if session.status == "CLOSED" else "PENDING")
+        if st_status == "PRESENT":
+            present_count += 1
+
+        student_list.append({
+            "id": st.id,
+            "roll_no": st.roll_no,
+            "enrollment_no": st.enrollment_no,
+            "name": st.user.full_name,
+            "status": st_status,
+            "timestamp": rec.timestamp.strftime("%H:%M:%S") if rec and rec.timestamp else "-",
+            "source": rec.source if rec else "-",
+            "remarks": rec.remarks if rec else "-"
+        })
+
+    expires_at = session.opened_at + datetime.timedelta(minutes=session.duration_minutes) if session.opened_at else None
+    remaining_seconds = max(0, int((expires_at - utc_now()).total_seconds())) if expires_at and session.status == "ACTIVE" else 0
+
+    details_dict = {
+        "session_id": session.id,
+        "token": session.token,
+        "status": session.status,
+        "duration_minutes": session.duration_minutes,
+        "remaining_seconds": remaining_seconds,
+        "lecture": {
+            "id": lecture.id,
+            "date": lecture.date.isoformat(),
+            "scheduled_start": lecture.scheduled_start.strftime("%H:%M"),
+            "scheduled_end": lecture.scheduled_end.strftime("%H:%M"),
+            "subject_code": timetable.subject.code,
+            "subject_name": timetable.subject.name,
+            "faculty_name": timetable.faculty.user.full_name,
+            "room": timetable.room,
+            "class_name": timetable.class_obj.name,
+            "semester": timetable.class_obj.semester
+        },
+        "stats": {
+            "total_students": len(all_students),
+            "present_count": present_count,
+            "percentage": round((present_count / len(all_students) * 100), 1) if all_students else 0.0
+        },
+        "students": student_list
+    }
+
+    if current_user.role in [UserRole.FACULTY.value, UserRole.ADMIN.value]:
+        details_dict["presence_code"] = session.presence_code
+        details_dict["presence_code_expires_at"] = session.presence_code_expires_at.isoformat() if session.presence_code_expires_at else None
+
+    return details_dict
+
+@router.post("/session/{session_id}/presence-code/rotate")
+async def api_rotate_presence_code(
+    session_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    if current_user.role not in [UserRole.FACULTY.value, UserRole.ADMIN.value]:
+        raise HTTPException(status_code=403, detail="Only faculty/admin can rotate presence challenge code.")
+
+    session = await rotate_session_presence_code(db=db, session_id=session_id, user_id=current_user.id)
+    return {
+        "message": "Classroom presence code rotated successfully",
+        "session_id": session.id,
+        "presence_code": session.presence_code,
+        "presence_code_expires_at": session.presence_code_expires_at.isoformat() if session.presence_code_expires_at else None
+    }
+
+@router.post("/mark")
+async def api_mark_attendance(
+    req: MarkAttendanceRequest,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    if current_user.role != UserRole.STUDENT.value:
+        raise HTTPException(status_code=403, detail="Only student accounts can mark attendance.")
+
+    # 1. Rate Limit per Student (10 requests per 30s)
+    user_key = f"user:{current_user.id}"
+    allowed, retry_after = attendance_rate_limiter.is_allowed(
+        user_key, USER_MAX_REQUESTS, USER_WINDOW_SECONDS
+    )
+    if not allowed:
+        retry_val = str(int(retry_after) or 1)
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many attendance attempts. Please wait {retry_after} seconds before retrying.",
+            headers={"Retry-After": retry_val}
+        )
+
+    # 2. Rate Limit per Network IP (180 requests per 60s for classroom Wi-Fi burst tolerance)
+    client_ip = request.client.host if request.client else "unknown"
+    ip_key = f"ip:{client_ip}"
+    ip_allowed, ip_retry_after = attendance_rate_limiter.is_allowed(
+        ip_key, IP_MAX_REQUESTS, IP_WINDOW_SECONDS
+    )
+    if not ip_allowed:
+        ip_retry_val = str(int(ip_retry_after) or 1)
+        raise HTTPException(
+            status_code=429,
+            detail=f"Classroom network attendance burst limit reached. Please wait {ip_retry_after} seconds.",
+            headers={"Retry-After": ip_retry_val}
+        )
+
+    device_token = req.device_token or request.headers.get("X-Device-Token") or request.cookies.get("smartattend_device_id")
+    device_secret = req.device_secret or request.headers.get("X-Device-Secret") or request.cookies.get("smartattend_device_secret")
+    presence_code = req.presence_code or request.headers.get("X-Presence-Code")
+    user_agent = request.headers.get("user-agent")
+
+    res = await mark_student_attendance(
+        db=db,
+        session_token=req.session_token,
+        student_user_id=current_user.id,
+        device_token=device_token,
+        device_secret=device_secret,
+        presence_code=presence_code,
+        user_agent=user_agent,
+        client_ip=client_ip
+    )
+
+    if res.get("device_token"):
+        response.set_cookie(
+            key="smartattend_device_id",
+            value=res["device_token"],
+            max_age=365*24*3600,
+            httponly=True,
+            samesite="lax"
+        )
+    return res
+
+@router.post("/session/{session_id}/edit")
+async def api_edit_attendance(
+    session_id: int,
+    req: EditAttendanceRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    if current_user.role not in [UserRole.FACULTY.value, UserRole.ADMIN.value]:
+        raise HTTPException(status_code=403, detail="Only faculty/admin can edit attendance records.")
+
+    rec = await edit_student_attendance(
+        db=db,
+        session_id=session_id,
+        student_id=req.student_id,
+        new_status=req.status,
+        remarks=req.remarks,
+        faculty_user_id=current_user.id
+    )
+    return {"message": "Attendance record updated", "student_id": rec.student_id, "status": rec.status}
+
+@router.get("/qr-code/{token}")
+def api_generate_qr_code(token: str, request: Request):
+    # Detect frontend URL from Referer, Origin, or environment
+    referer = request.headers.get("referer")
+    origin = request.headers.get("origin")
+    client_frontend = None
+    if referer:
+        try:
+            parsed = urlparse(referer)
+            client_frontend = f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
+        except Exception:
+            pass
+    elif origin:
+        client_frontend = origin.rstrip("/")
+
+    env_frontend = os.getenv("FRONTEND_URL", "").strip().rstrip("/")
+    # Guard against misconfigured FRONTEND_URL pointing to the Render backend host or port 3000
+    if env_frontend and ("onrender.com" in env_frontend or ":3000" in env_frontend):
+        env_frontend = ""
+
+    if client_frontend and ("netlify.app" in client_frontend or "localhost" in client_frontend or "127.0.0.1" in client_frontend):
+        frontend_url = client_frontend
+    elif env_frontend:
+        frontend_url = env_frontend
+    else:
+        frontend_url = "https://nsit-attendance.netlify.app"
+
+    if not frontend_url.startswith("http://") and not frontend_url.startswith("https://"):
+        frontend_url = f"https://{frontend_url}"
+
+    url = f"{frontend_url}/attendance/{token}"
+
+    img = qrcode.make(url)
+    img_byte_arr = io.BytesIO()
+    img.save(img_byte_arr, format='PNG')
+    img_byte_arr.seek(0)
+
+    return StreamingResponse(img_byte_arr, media_type="image/png")
+
+@router.get("/session/{session_id}/rotating-token")
+def api_get_rotating_token(
+    session_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    from app.auth.security import generate_rotating_qr_token
+    session = db.query(AttendanceSession).filter(AttendanceSession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Attendance session not found")
+    if session.status != "ACTIVE":
+        raise HTTPException(status_code=400, detail="Attendance session is not active")
+    rotating_token = generate_rotating_qr_token(session.id, window_seconds=15)
+    return {
+        "session_id": session.id,
+        "rotating_token": rotating_token,
+        "window_seconds": 15
+    }
+

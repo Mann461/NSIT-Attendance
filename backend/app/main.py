@@ -14,15 +14,17 @@ from app.models.schema import User, UserRole, AttendanceSession
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: Create tables and auto-seed if empty
-    Base.metadata.create_all(bind=engine)
-    db = SessionLocal()
     try:
-        seed_database(db)
-    except Exception as e:
-        print(f"Startup warning during database seeding: {e}")
-    finally:
-        db.close()
+        Base.metadata.create_all(bind=engine)
+        db = SessionLocal()
+        try:
+            seed_database(db)
+        except Exception as seed_err:
+            print(f"Startup warning during database seeding: {seed_err}")
+        finally:
+            db.close()
+    except Exception as db_err:
+        print(f"Startup warning during database initialization: {db_err}")
     yield
 
 app = FastAPI(
