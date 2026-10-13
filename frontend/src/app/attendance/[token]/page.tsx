@@ -83,6 +83,10 @@ export default function StudentAttendanceLandingPage() {
     setLoading(true);
     setErrorMessage("");
     const authToken = localStorage.getItem("smartattend_token");
+    if (!authToken) {
+      router.push(`/login?redirect=/attendance/${token}`);
+      return;
+    }
 
     try {
       const res = await fetch(`${API_BASE_URL}/api/v1/devices/register`, {
@@ -96,9 +100,14 @@ export default function StudentAttendanceLandingPage() {
         })
       });
 
+      if (res.status === 401) {
+        router.push(`/login?redirect=/attendance/${token}`);
+        return;
+      }
+
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.detail || "Device registration failed");
+        throw new Error(data.detail || (res.status === 404 ? "Device service is deploying. Please retry shortly." : "Device registration failed"));
       }
 
       // Store device credentials safely in localStorage

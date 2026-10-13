@@ -5,7 +5,8 @@ import { useRouter } from "next/navigation";
 import {
   QrCode, LogOut, CheckCircle2, XCircle, BookOpen, User, Percent,
   AlertCircle, ChevronRight, Camera, X, RefreshCw, Sparkles,
-  TrendingUp, Award, Clock, ArrowRight, ShieldCheck, Flame, Smartphone
+  TrendingUp, Award, Clock, ArrowRight, ShieldCheck, Flame, Smartphone,
+  ShieldAlert, AlertTriangle
 } from "lucide-react";
 
 import { API_BASE_URL } from "@/config";
@@ -17,6 +18,8 @@ export default function StudentDashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [selectedSubject, setSelectedSubject] = useState<any>(null);
+  const [deviceRegistering, setDeviceRegistering] = useState(false);
+  const [deviceRegisterMessage, setDeviceRegisterMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   // Mobile navigation active tab: "overview" | "subjects"
   const [activeTab, setActiveTab] = useState<"overview" | "subjects">("overview");
@@ -48,6 +51,55 @@ export default function StudentDashboard() {
       }
     } catch (e) {
       // ignore
+    }
+  };
+
+  const handleRegisterDevice = async () => {
+    setDeviceRegistering(true);
+    setDeviceRegisterMessage(null);
+    const token = localStorage.getItem("smartattend_token");
+    if (!token) {
+      router.push("/login");
+      return;
+    }
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/v1/devices/register`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          user_agent: typeof navigator !== "undefined" ? navigator.userAgent : ""
+        })
+      });
+
+      const resData = await res.json();
+      if (!res.ok) {
+        throw new Error(resData.detail || "Failed to register this phone.");
+      }
+
+      if (resData.device_token) {
+        localStorage.setItem("smartattend_device_token", resData.device_token);
+      }
+      if (resData.device_secret) {
+        localStorage.setItem("smartattend_device_secret", resData.device_secret);
+      }
+
+      setDeviceRegisterMessage({
+        type: "success",
+        text: "This phone was successfully bound as your trusted attendance device!"
+      });
+
+      await fetchDeviceStatus();
+    } catch (err: any) {
+      setDeviceRegisterMessage({
+        type: "error",
+        text: err.message || "Failed to register device. Please try again or consult faculty."
+      });
+    } finally {
+      setDeviceRegistering(false);
     }
   };
 
@@ -364,25 +416,105 @@ export default function StudentDashboard() {
             </div>
 
             {/* Trusted Device Anti-Proxy Security Status Card */}
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 flex items-center justify-between gap-4">
-              <div className="flex items-center gap-3">
-                <div className={`p-2.5 rounded-xl border ${deviceStatus?.has_trusted_device ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400" : "bg-amber-500/10 border-amber-500/30 text-amber-400"}`}>
-                  <Smartphone className="w-5 h-5" />
+            <div className={`border rounded-2xl p-4 sm:p-5 transition shadow-lg ${
+              !deviceStatus?.has_trusted_device
+                ? "bg-gradient-to-br from-slate-900 via-slate-900 to-blue-950/40 border-blue-500/30"
+                : deviceStatus?.is_current_device_trusted
+                ? "bg-slate-900/90 border-emerald-500/30"
+                : "bg-gradient-to-br from-slate-900 via-slate-900 to-amber-950/30 border-amber-500/30"
+            }`}>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="flex items-start gap-3.5">
+                  <div className={`p-2.5 rounded-xl border shrink-0 mt-0.5 ${
+                    !deviceStatus?.has_trusted_device
+                      ? "bg-blue-500/15 border-blue-500/30 text-blue-400"
+                      : deviceStatus?.is_current_device_trusted
+                      ? "bg-emerald-500/15 border-emerald-500/30 text-emerald-400"
+                      : "bg-amber-500/15 border-amber-500/30 text-amber-400"
+                  }`}>
+                    {!deviceStatus?.has_trusted_device ? (
+                      <Smartphone className="w-5 h-5 text-blue-400" />
+                    ) : deviceStatus?.is_current_device_trusted ? (
+                      <ShieldCheck className="w-5 h-5 text-emerald-400" />
+                    ) : (
+                      <ShieldAlert className="w-5 h-5 text-amber-400" />
+                    )}
+                  </div>
+                  <div>
+                    <h4 className="text-xs sm:text-sm font-bold text-white flex flex-wrap items-center gap-2">
+                      <span>Trusted Attendance Phone</span>
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wide ${
+                        !deviceStatus?.has_trusted_device
+                          ? deviceStatus?.status === "REVOKED"
+                            ? "bg-blue-500/20 text-blue-300 border border-blue-500/30"
+                            : "bg-amber-500/20 text-amber-300 border border-amber-500/30"
+                          : deviceStatus?.is_current_device_trusted
+                          ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
+                          : "bg-amber-500/20 text-amber-300 border border-amber-500/30"
+                      }`}>
+                        {!deviceStatus?.has_trusted_device
+                          ? deviceStatus?.status === "REVOKED" ? "Reset By Faculty" : "Not Registered"
+                          : deviceStatus?.is_current_device_trusted
+                          ? "Bound & Active (This Handset)"
+                          : "Different Handset Bound"}
+                      </span>
+                    </h4>
+                    <p className="text-[11px] sm:text-xs text-slate-300 mt-1 leading-relaxed max-w-xl">
+                      {!deviceStatus?.has_trusted_device ? (
+                        <>
+                          SmartAttend anti-proxy policy allows <strong className="text-white">one phone per student</strong>. Register this handset now to enable attendance marking during lectures.
+                        </>
+                      ) : deviceStatus?.is_current_device_trusted ? (
+                        <>
+                          This phone is authenticated and bound as your trusted attendance device. Device ID: <code className="font-mono text-emerald-300 text-[10px] bg-slate-950 px-1 py-0.5 rounded">{deviceStatus.device_token}</code>
+                        </>
+                      ) : (
+                        <>
+                          Your student account is bound to another device (<code className="font-mono text-amber-300 text-[10px] bg-slate-950 px-1 py-0.5 rounded">{deviceStatus.device_token || "different phone"}</code>). Attendance can only be recorded from that phone. If you replaced your phone, ask your faculty to authorize a reset.
+                        </>
+                      )}
+                    </p>
+                  </div>
                 </div>
-                <div>
-                  <h4 className="text-xs font-bold text-white flex items-center gap-2">
-                    <span>Trusted Attendance Phone</span>
-                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${deviceStatus?.has_trusted_device ? "bg-emerald-500/20 text-emerald-300" : "bg-amber-500/20 text-amber-300"}`}>
-                      {deviceStatus?.has_trusted_device ? "Bound & Active" : (deviceStatus?.status === "REVOKED" ? "Reset By Faculty" : "Not Registered")}
-                    </span>
-                  </h4>
-                  <p className="text-[11px] text-slate-400 mt-0.5">
-                    {deviceStatus?.has_trusted_device
-                      ? `Device Token: ${deviceStatus.device_token} • Policy: 1 Phone per Student`
-                      : "Attendance requires registering this phone as your trusted device"}
-                  </p>
-                </div>
+
+                {/* Self-service registration button when not bound or reset */}
+                {!deviceStatus?.has_trusted_device && (
+                  <button
+                    id="register-phone-btn"
+                    onClick={handleRegisterDevice}
+                    disabled={deviceRegistering}
+                    className="w-full sm:w-auto px-4 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 active:scale-95 disabled:opacity-50 text-white text-xs font-bold rounded-xl shadow-lg shadow-blue-600/30 transition flex items-center justify-center gap-2 shrink-0 self-stretch sm:self-center"
+                  >
+                    {deviceRegistering ? (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        <span>Binding Handset...</span>
+                      </>
+                    ) : (
+                      <>
+                        <ShieldCheck className="w-3.5 h-3.5" />
+                        <span>Register This Phone</span>
+                      </>
+                    )}
+                  </button>
+                )}
               </div>
+
+              {/* Status feedback message */}
+              {deviceRegisterMessage && (
+                <div className={`mt-3.5 p-3 rounded-xl text-xs flex items-center gap-2.5 transition animate-in fade-in ${
+                  deviceRegisterMessage.type === "success"
+                    ? "bg-emerald-500/10 border border-emerald-500/30 text-emerald-300"
+                    : "bg-red-500/10 border border-red-500/30 text-red-300"
+                }`}>
+                  {deviceRegisterMessage.type === "success" ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+                  )}
+                  <span className="font-medium">{deviceRegisterMessage.text}</span>
+                </div>
+              )}
             </div>
 
             {/* Mobile Scan Promotion Card */}

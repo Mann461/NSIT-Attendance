@@ -47,23 +47,30 @@ def register_student_device(
     # 2. Check if requested device token belongs to another student
     if requested_token:
         conflict_device = db.query(Device).filter(Device.device_token == requested_token).first()
-        if conflict_device and conflict_device.student_id is not None and conflict_device.student_id != student.id:
-            # Audit cross-account attempt
-            audit = AuditLog(
-                user_id=student_user_id,
-                action="CROSS_ACCOUNT_DEVICE_ENROLLMENT_BLOCKED",
-                entity="Device",
-                entity_id=str(conflict_device.id),
-                details=f"Student {student.enrollment_no} attempted to enroll device already owned by student_id {conflict_device.student_id}",
-                ip_address=client_ip
-            )
-            db.add(audit)
-            db.commit()
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="This device is already registered to another student account."
-            )
-        dev_token = requested_token
+        if conflict_device:
+            if conflict_device.student_id is not None and conflict_device.student_id != student.id:
+                # Audit cross-account attempt
+                audit = AuditLog(
+                    user_id=student_user_id,
+                    action="CROSS_ACCOUNT_DEVICE_ENROLLMENT_BLOCKED",
+                    entity="Device",
+                    entity_id=str(conflict_device.id),
+                    details=f"Student {student.enrollment_no} attempted to enroll device already owned by student_id {conflict_device.student_id}",
+                    ip_address=client_ip
+                )
+                db.add(audit)
+                db.commit()
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="This device is already registered to another student account."
+                )
+            elif conflict_device.student_id == student.id:
+                # Previous revoked/inactive device record from this student: generate fresh token to maintain unique index
+                dev_token = generate_device_token()
+            else:
+                dev_token = requested_token
+        else:
+            dev_token = requested_token
     else:
         dev_token = generate_device_token()
 

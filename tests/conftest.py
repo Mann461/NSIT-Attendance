@@ -9,4 +9,18 @@ if backend_path not in sys.path:
 # Ensure required environment variables exist during testing
 os.environ.setdefault("SECRET_KEY", "smartattend_test_jwt_secret_key_pytest_conftest_2026")
 os.environ.setdefault("CORS_ORIGINS", "https://nsit-attendance.netlify.app,http://localhost:3000,http://127.0.0.1:3000")
-os.environ.setdefault("DATABASE_URL", "sqlite:///./smartattend.db")
+os.environ.setdefault("DATABASE_URL", "sqlite:///./smartattend_test.db")
+
+import pytest
+from app.database import engine, Base, SessionLocal
+from app.services.seed_service import seed_database
+
+@pytest.fixture(scope="session", autouse=True)
+def setup_test_db():
+    Base.metadata.create_all(bind=engine)
+    db = SessionLocal()
+    try:
+        seed_database(db)
+    finally:
+        db.close()
+    yield
