@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import {
   QrCode, LogOut, CheckCircle2, XCircle, BookOpen, User, Percent,
   AlertCircle, ChevronRight, Camera, X, RefreshCw, Sparkles,
-  TrendingUp, Award, Clock, ArrowRight, ShieldCheck, Flame
+  TrendingUp, Award, Clock, ArrowRight, ShieldCheck, Flame, Smartphone
 } from "lucide-react";
 
 import { API_BASE_URL } from "@/config";
@@ -13,6 +13,7 @@ import { API_BASE_URL } from "@/config";
 export default function StudentDashboard() {
   const router = useRouter();
   const [data, setData] = useState<any>(null);
+  const [deviceStatus, setDeviceStatus] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [selectedSubject, setSelectedSubject] = useState<any>(null);
@@ -28,7 +29,27 @@ export default function StudentDashboard() {
 
   useEffect(() => {
     fetchDashboard();
+    fetchDeviceStatus();
   }, []);
+
+  const fetchDeviceStatus = async () => {
+    const token = localStorage.getItem("smartattend_token");
+    if (!token) return;
+    try {
+      const storedToken = localStorage.getItem("smartattend_device_token");
+      const storedSecret = localStorage.getItem("smartattend_device_secret");
+      const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
+      if (storedToken) headers["X-Device-Token"] = storedToken;
+      if (storedSecret) headers["X-Device-Secret"] = storedSecret;
+      const res = await fetch(`${API_BASE_URL}/api/v1/devices/status`, { headers });
+      if (res.ok) {
+        const json = await res.json();
+        setDeviceStatus(json);
+      }
+    } catch (e) {
+      // ignore
+    }
+  };
 
   const fetchDashboard = async () => {
     setLoading(true);
@@ -340,6 +361,28 @@ export default function StudentDashboard() {
                   </span>
                 </div>
               )}
+            </div>
+
+            {/* Trusted Device Anti-Proxy Security Status Card */}
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 flex items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className={`p-2.5 rounded-xl border ${deviceStatus?.has_trusted_device ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400" : "bg-amber-500/10 border-amber-500/30 text-amber-400"}`}>
+                  <Smartphone className="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 className="text-xs font-bold text-white flex items-center gap-2">
+                    <span>Trusted Attendance Phone</span>
+                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${deviceStatus?.has_trusted_device ? "bg-emerald-500/20 text-emerald-300" : "bg-amber-500/20 text-amber-300"}`}>
+                      {deviceStatus?.has_trusted_device ? "Bound & Active" : (deviceStatus?.status === "REVOKED" ? "Reset By Faculty" : "Not Registered")}
+                    </span>
+                  </h4>
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    {deviceStatus?.has_trusted_device
+                      ? `Device Token: ${deviceStatus.device_token} • Policy: 1 Phone per Student`
+                      : "Attendance requires registering this phone as your trusted device"}
+                  </p>
+                </div>
+              </div>
             </div>
 
             {/* Mobile Scan Promotion Card */}

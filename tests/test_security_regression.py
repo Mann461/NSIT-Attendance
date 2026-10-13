@@ -90,6 +90,16 @@ def get_or_create_active_session():
             session.status = "ACTIVE"
             session.opened_at = utc_now()
             session.duration_minutes = 60
+            session.presence_code = "9999"
+            session.presence_code_expires_at = utc_now() + datetime.timedelta(minutes=60)
+            session.presence_challenge_required = True
+            db.commit()
+            db.refresh(session)
+    else:
+        if not session.presence_code:
+            session.presence_code = "9999"
+            session.presence_code_expires_at = utc_now() + datetime.timedelta(minutes=60)
+            session.presence_challenge_required = True
             db.commit()
             db.refresh(session)
     db.close()
@@ -118,16 +128,30 @@ def test_integrity_error_graceful_handling():
     session = get_or_create_active_session()
     db = SessionLocal()
     student = db.query(Student).filter(Student.class_id == 1).first()
-    student_user = student.user
+    student_id = student.id
+    student_user_id = student.user.id
+    student_email = student.user.email
+    student_role = student.user.role
+
+    from app.models.schema import Device, DeviceResetLog
+    db.query(DeviceResetLog).filter(DeviceResetLog.student_id == student_id).delete()
+    db.query(Device).filter(Device.student_id == student_id).delete()
+    db.commit()
     db.close()
 
     token = create_access_token(
-        data={"sub": str(student_user.id), "email": student_user.email, "role": student_user.role}
+        data={"sub": str(student_user_id), "email": student_email, "role": student_role}
     )
     headers = {"Authorization": f"Bearer {token}"}
+    device_token = f"dev_race_test_{student_id}"
+    reg_resp = client.post("/api/v1/devices/register", json={"device_token": device_token}, headers=headers)
+    sec = reg_resp.json().get("device_secret") if reg_resp.status_code == 200 else None
+
     payload = {
         "session_token": session.token,
-        "device_token": f"dev_race_test_{student.id}"
+        "device_token": device_token,
+        "device_secret": sec,
+        "presence_code": session.presence_code
     }
 
     # Reset rate limit for this test
@@ -151,7 +175,7 @@ def test_integrity_error_graceful_handling():
     db = SessionLocal()
     records = db.query(AttendanceRecord).filter(
         AttendanceRecord.session_id == session.id,
-        AttendanceRecord.student_id == student.id
+        AttendanceRecord.student_id == student_id
     ).all()
     db.close()
     assert len(records) == 1, "Database constraint violated or duplicate record created!"
@@ -224,14 +248,30 @@ def test_rate_limiting_enforcement():
     session = get_or_create_active_session()
     db = SessionLocal()
     student = db.query(Student).first()
-    student_user = student.user
+    student_id = student.id
+    student_user_id = student.user.id
+    student_email = student.user.email
+    student_role = student.user.role
+
+    from app.models.schema import Device, DeviceResetLog
+    db.query(DeviceResetLog).filter(DeviceResetLog.student_id == student_id).delete()
+    db.query(Device).filter(Device.student_id == student_id).delete()
+    db.commit()
     db.close()
 
     token = create_access_token(
-        data={"sub": str(student_user.id), "email": student_user.email, "role": student_user.role}
+        data={"sub": str(student_user_id), "email": student_email, "role": student_role}
     )
     headers = {"Authorization": f"Bearer {token}"}
-    payload = {"session_token": session.token, "device_token": f"dev_rl_{student.id}"}
+    device_token = f"dev_rl_{student_id}"
+    reg_resp = client.post("/api/v1/devices/register", json={"device_token": device_token}, headers=headers)
+    sec = reg_resp.json().get("device_secret") if reg_resp.status_code == 200 else None
+    payload = {
+        "session_token": session.token,
+        "device_token": device_token,
+        "device_secret": sec,
+        "presence_code": session.presence_code
+    }
 
     attendance_rate_limiter.reset()
 

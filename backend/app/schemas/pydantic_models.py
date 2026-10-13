@@ -83,6 +83,38 @@ class ScheduledLectureResponse(BaseModel):
     opened_at: Optional[str] = None
     duration_minutes: Optional[int] = None
 
+# --- Trusted Device Schemas ---
+class DeviceRegisterRequest(BaseModel):
+    device_token: Optional[str] = None
+    user_agent: Optional[str] = None
+
+class DeviceRegisterResponse(BaseModel):
+    status: str
+    message: str
+    device_token: str
+    device_secret: str
+    student_id: int
+    registered_at: str
+
+class DeviceStatusResponse(BaseModel):
+    has_trusted_device: bool
+    status: str
+    device_token: Optional[str] = None
+    registered_at: Optional[str] = None
+    is_current_device_trusted: bool = False
+    message: Optional[str] = None
+
+class DeviceResetRequest(BaseModel):
+    student_id: int
+    reason: str
+
+class DeviceResetResponse(BaseModel):
+    status: str
+    message: str
+    student_id: int
+    revoked_count: int
+    reset_at: str
+
 # --- Attendance Session & Record Schemas ---
 class StartAttendanceRequest(BaseModel):
     duration_minutes: int = 5
@@ -97,10 +129,15 @@ class AttendanceSessionResponse(BaseModel):
     qr_code_url: str
     total_students: int
     present_count: int
+    presence_code: Optional[str] = None
+    presence_code_expires_at: Optional[str] = None
+    presence_challenge_required: Optional[bool] = True
 
 class MarkAttendanceRequest(BaseModel):
     session_token: str
     device_token: Optional[str] = None
+    device_secret: Optional[str] = None
+    presence_code: Optional[str] = None
 
 class AttendanceRecordResponse(BaseModel):
     id: int

@@ -68,8 +68,35 @@ def generate_secure_session_token() -> str:
     return f"sec_tok_{secrets.token_urlsafe(32)}"
 
 def generate_device_token() -> str:
-    """Generates a cryptographically random device token."""
+    """Generates a cryptographically random device token identifier."""
     return f"dev_{secrets.token_hex(16)}"
+
+def generate_device_secret() -> str:
+    """Generates a cryptographically secure random device secret bound to trusted hardware."""
+    return f"dsec_{secrets.token_urlsafe(32)}"
+
+def hash_device_secret(secret: str) -> str:
+    """Computes SHA-256 hash of device secret for safe storage without storing plaintext."""
+    if not secret:
+        return ""
+    return hashlib.sha256(secret.encode("utf-8")).hexdigest()
+
+def verify_device_secret(plain_secret: str, stored_hash: str) -> bool:
+    """Constant-time verification of device secret against stored hash."""
+    if not plain_secret or not stored_hash:
+        return False
+    computed = hash_device_secret(plain_secret)
+    return secrets.compare_digest(computed, stored_hash)
+
+def generate_presence_code(length: int = 4) -> str:
+    """Generates a cryptographically random numeric classroom presence code (e.g. 4 digits)."""
+    return f"{secrets.randbelow(9000) + 1000}"
+
+def verify_presence_code(attempt: Optional[str], actual: Optional[str]) -> bool:
+    """Constant-time verification of classroom presence challenge code."""
+    if not attempt or not actual:
+        return False
+    return secrets.compare_digest(attempt.strip(), actual.strip())
 
 def generate_rotating_qr_token(session_id: int, window_seconds: int = 15) -> str:
     """

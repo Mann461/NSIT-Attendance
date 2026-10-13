@@ -54,6 +54,8 @@ def test_full_smartattend_e2e_flow():
     qr_token = session_data["token"]
     session_id = session_data["session_id"]
 
+    presence_code = session_data.get("presence_code")
+
     # 6. Test Student 1 Login
     st1_resp = client.post("/api/v1/auth/login", json={
         "email_or_enrollment": "251943004001",
@@ -63,10 +65,18 @@ def test_full_smartattend_e2e_flow():
     st1_token = st1_resp.json()["access_token"]
     st1_headers = {"Authorization": f"Bearer {st1_token}"}
 
-    # 7. Test Student 1 Scanning QR Token
+    # 7. Test Student 1 Device Registration & Scanning QR Token
+    reg1 = client.post("/api/v1/devices/register", json={
+        "device_token": "dev_test_device_001"
+    }, headers=st1_headers)
+    assert reg1.status_code == 200
+    sec1 = reg1.json()["device_secret"]
+
     mark_resp1 = client.post("/api/v1/attendance/mark", json={
         "session_token": qr_token,
-        "device_token": "dev_test_device_001"
+        "device_token": "dev_test_device_001",
+        "device_secret": sec1,
+        "presence_code": presence_code
     }, headers=st1_headers)
     assert mark_resp1.status_code == 200
     assert mark_resp1.json()["status"] == "SUCCESS"
@@ -74,7 +84,9 @@ def test_full_smartattend_e2e_flow():
     # 8. Test Duplicate Student Scan (Same student scanning again)
     mark_resp_dup = client.post("/api/v1/attendance/mark", json={
         "session_token": qr_token,
-        "device_token": "dev_test_device_001"
+        "device_token": "dev_test_device_001",
+        "device_secret": sec1,
+        "presence_code": presence_code
     }, headers=st1_headers)
     assert mark_resp_dup.status_code == 200
     assert mark_resp_dup.json()["status"] == "ALREADY_RECORDED"
@@ -90,15 +102,24 @@ def test_full_smartattend_e2e_flow():
 
     mark_resp_proxy = client.post("/api/v1/attendance/mark", json={
         "session_token": qr_token,
-        "device_token": "dev_test_device_001"  # Same device!
+        "device_token": "dev_test_device_001",
+        "device_secret": sec1,
+        "presence_code": presence_code
     }, headers=st2_headers)
-    assert mark_resp_proxy.status_code == 400
-    assert "already been used" in mark_resp_proxy.json()["detail"]
+    assert mark_resp_proxy.status_code in [400, 403]
 
-    # 10. Test Student 2 Scanning with unique device token
+    # 10. Test Student 2 Scanning with unique registered device
+    reg2 = client.post("/api/v1/devices/register", json={
+        "device_token": "dev_test_device_002"
+    }, headers=st2_headers)
+    assert reg2.status_code == 200
+    sec2 = reg2.json()["device_secret"]
+
     mark_resp2 = client.post("/api/v1/attendance/mark", json={
         "session_token": qr_token,
-        "device_token": "dev_test_device_002"
+        "device_token": "dev_test_device_002",
+        "device_secret": sec2,
+        "presence_code": presence_code
     }, headers=st2_headers)
     assert mark_resp2.status_code == 200
     assert mark_resp2.json()["status"] == "SUCCESS"

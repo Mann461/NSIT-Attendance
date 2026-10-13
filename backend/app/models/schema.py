@@ -1,7 +1,7 @@
 import enum
 import datetime
 from sqlalchemy import (
-    Column, Integer, String, Boolean, DateTime, Date, Time, Enum, ForeignKey, UniqueConstraint, Text
+    Column, Integer, String, Boolean, DateTime, Date, Time, Enum, ForeignKey, UniqueConstraint, Text, Index, text
 )
 from sqlalchemy.orm import relationship
 from app.database import Base, utc_now
@@ -31,6 +31,11 @@ class AttendanceStatus(str, enum.Enum):
 class AttendanceSource(str, enum.Enum):
     QR_SCAN = "QR_SCAN"
     MANUAL_FACULTY = "MANUAL_FACULTY"
+
+class DeviceStatus(str, enum.Enum):
+    ACTIVE = "ACTIVE"
+    REVOKED = "REVOKED"
+    LEGACY_UNCLAIMED = "LEGACY_UNCLAIMED"
 
 class SubjectType(str, enum.Enum):
     THEORY = "THEORY"
@@ -80,6 +85,7 @@ class Student(Base):
     user = relationship("User", back_populates="student_profile")
     student_class = relationship("Class", back_populates="students")
     attendance_records = relationship("AttendanceRecord", back_populates="student")
+    devices = relationship("Device", back_populates="student")
 
 class Faculty(Base):
     __tablename__ = "faculty"
@@ -153,6 +159,11 @@ class AttendanceSession(Base):
     closed_at = Column(DateTime, nullable=True)
     duration_minutes = Column(Integer, default=5)
 
+    # Remote QR sharing defense: classroom-only presence challenge
+    presence_code = Column(String(16), nullable=True)
+    presence_code_expires_at = Column(DateTime, nullable=True)
+    presence_challenge_required = Column(Boolean, default=True, nullable=False)
+
     scheduled_lecture = relationship("ScheduledLecture", back_populates="attendance_session")
     records = relationship("AttendanceRecord", back_populates="session")
 
@@ -160,11 +171,46 @@ class Device(Base):
     __tablename__ = "devices"
 
     id = Column(Integer, primary_key=True, index=True)
+    student_id = Column(Integer, ForeignKey("students.id"), nullable=True, index=True)
     device_token = Column(String, unique=True, index=True, nullable=False)
+    device_secret_hash = Column(String, nullable=True)
+    status = Column(String, default=DeviceStatus.ACTIVE.value, nullable=False)
     user_agent = Column(Text, nullable=True)
     first_used_at = Column(DateTime, default=utc_now)
+    registered_at = Column(DateTime, default=utc_now)
+    last_used_at = Column(DateTime, nullable=True)
+    revoked_at = Column(DateTime, nullable=True)
+    revoked_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    revocation_reason = Column(String, nullable=True)
 
+    student = relationship("Student", back_populates="devices")
+    revoked_by_user = relationship("User", foreign_keys=[revoked_by_user_id])
     attendance_records = relationship("AttendanceRecord", back_populates="device")
+
+    __table_args__ = (
+        Index(
+            "uq_one_active_device_per_student",
+            "student_id",
+            unique=True,
+            sqlite_where=text("status = 'ACTIVE'"),
+            postgresql_where=text("status = 'ACTIVE'"),
+        ),
+    )
+
+class DeviceResetLog(Base):
+    __tablename__ = "device_reset_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    student_id = Column(Integer, ForeignKey("students.id"), nullable=False, index=True)
+    faculty_user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    old_device_id = Column(Integer, ForeignKey("devices.id"), nullable=True)
+    reason = Column(String, nullable=False)
+    timestamp = Column(DateTime, default=utc_now, nullable=False)
+    ip_address = Column(String, nullable=True)
+
+    student = relationship("Student")
+    faculty_user = relationship("User", foreign_keys=[faculty_user_id])
+    old_device = relationship("Device", foreign_keys=[old_device_id])
 
 class AttendanceRecord(Base):
     __tablename__ = "attendance_records"
