@@ -19,6 +19,8 @@ async def lifespan(app: FastAPI):
     db = SessionLocal()
     try:
         seed_database(db)
+    except Exception as e:
+        print(f"Startup warning during database seeding: {e}")
     finally:
         db.close()
     yield
