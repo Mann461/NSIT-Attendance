@@ -23,8 +23,23 @@ async def lifespan(app: FastAPI):
         try:
             seed_database(db)
             print(">> Database seeding verified.", flush=True)
+
+            # Purge any legacy sample/mock lectures from active database
+            import datetime
+            from app.models.schema import ScheduledLecture, AttendanceSession, AttendanceRecord
+            old_lecs = db.query(ScheduledLecture).filter(ScheduledLecture.date < datetime.date(2026, 10, 1)).all()
+            if old_lecs:
+                old_ids = [l.id for l in old_lecs]
+                old_sess = db.query(AttendanceSession).filter(AttendanceSession.scheduled_lecture_id.in_(old_ids)).all()
+                old_sess_ids = [s.id for s in old_sess]
+                if old_sess_ids:
+                    db.query(AttendanceRecord).filter(AttendanceRecord.session_id.in_(old_sess_ids)).delete(synchronize_session=False)
+                    db.query(AttendanceSession).filter(AttendanceSession.id.in_(old_sess_ids)).delete(synchronize_session=False)
+                db.query(ScheduledLecture).filter(ScheduledLecture.id.in_(old_ids)).delete(synchronize_session=False)
+                db.commit()
+                print(f">> Purged {len(old_ids)} past sample lectures from active database.", flush=True)
         except Exception as seed_err:
-            print(f">> Startup warning during database seeding: {seed_err}", flush=True)
+            print(f">> Startup warning during database seeding or purge: {seed_err}", flush=True)
         finally:
             db.close()
     except Exception as db_err:

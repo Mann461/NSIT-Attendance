@@ -322,3 +322,32 @@ def api_get_rotating_token(
         "window_seconds": 15
     }
 
+@router.post("/purge-sample-records")
+def api_purge_sample_records(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    if current_user.role not in [UserRole.FACULTY.value, UserRole.ADMIN.value]:
+        raise HTTPException(status_code=403, detail="Only faculty/admin can purge sample records.")
+
+    # Purge any lectures dated prior to 2026-10-01 (mock dates from July/August/September)
+    old_lecs = db.query(ScheduledLecture).filter(ScheduledLecture.date < datetime.date(2026, 10, 1)).all()
+    old_ids = [l.id for l in old_lecs]
+    purged_records = 0
+    if old_ids:
+        old_sess = db.query(AttendanceSession).filter(AttendanceSession.scheduled_lecture_id.in_(old_ids)).all()
+        old_sess_ids = [s.id for s in old_sess]
+        if old_sess_ids:
+            purged_records = db.query(AttendanceRecord).filter(AttendanceRecord.session_id.in_(old_sess_ids)).delete(synchronize_session=False)
+            db.query(AttendanceSession).filter(AttendanceSession.id.in_(old_sess_ids)).delete(synchronize_session=False)
+        db.query(ScheduledLecture).filter(ScheduledLecture.id.in_(old_ids)).delete(synchronize_session=False)
+        db.commit()
+
+    return {
+        "status": "success",
+        "purged_lectures": len(old_ids),
+        "purged_records": purged_records,
+        "message": f"Successfully purged {len(old_ids)} past sample lectures and {purged_records} attendance records."
+    }
+
+

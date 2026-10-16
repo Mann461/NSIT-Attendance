@@ -21,8 +21,9 @@ class Settings:
                 raise RuntimeError("SECRET_KEY environment variable is required")
             # Safe production fallback for cloud hosts where user hasn't set SECRET_KEY in dashboard
             secret = os.getenv("JWT_SECRET", "smartattend_prod_secret_nsit_ifscs_cyber_2026")
-        self.SECRET_KEY = secret
-        db_url = os.getenv("DATABASE_URL", "sqlite:///./smartattend.db").strip()
+        SUPABASE_URL = "postgresql://postgres.llvkkucryhdybemcrvdv:%40Mann%40461%40Thakkar@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres?sslmode=require"
+        default_db = "sqlite:///./smartattend.db" if "PYTEST_CURRENT_TEST" in os.environ else SUPABASE_URL
+        db_url = os.getenv("DATABASE_URL", default_db).strip()
         # Clean up any surrounding brackets in passwords or special characters
         import re
         import urllib.parse
