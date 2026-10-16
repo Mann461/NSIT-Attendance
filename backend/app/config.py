@@ -22,7 +22,19 @@ class Settings:
             # Safe production fallback for cloud hosts where user hasn't set SECRET_KEY in dashboard
             secret = os.getenv("JWT_SECRET", "smartattend_prod_secret_nsit_ifscs_cyber_2026")
         self.SECRET_KEY = secret
-        db_url = os.getenv("DATABASE_URL", "sqlite:///./smartattend.db")
+        db_url = os.getenv("DATABASE_URL", "sqlite:///./smartattend.db").strip()
+        # Clean up any surrounding brackets in passwords or special characters
+        import re
+        import urllib.parse
+        m = re.match(r'^(postgres(?:ql)?(?:\+\w+)?://)([^:]+):(\[?.*?\]?)@([^/@]+(?::\d+)?(?:/.*)?)$', db_url)
+        if m:
+            prefix, user, raw_pwd, host_and_rest = m.groups()
+            if raw_pwd.startswith('[') and raw_pwd.endswith(']'):
+                raw_pwd = raw_pwd[1:-1]
+            unquoted = urllib.parse.unquote(raw_pwd)
+            encoded_pwd = urllib.parse.quote_plus(unquoted)
+            db_url = f"{prefix}{user}:{encoded_pwd}@{host_and_rest}"
+
         if db_url.startswith("postgres://"):
             db_url = db_url.replace("postgres://", "postgresql+psycopg2://", 1)
         elif db_url.startswith("postgresql://") and not db_url.startswith("postgresql+"):
