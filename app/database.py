@@ -14,15 +14,32 @@ def utc_now() -> datetime:
     """Returns timezone-safe UTC datetime compatible with SQLite and Postgres."""
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
+from sqlalchemy import text
+
 connect_args = {}
 if settings.DATABASE_URL.startswith("sqlite"):
     connect_args = {"check_same_thread": False, "timeout": 30}
+elif "postgres" in settings.DATABASE_URL and "sslmode" not in settings.DATABASE_URL:
+    connect_args = {"sslmode": "prefer"}
 
-engine = create_engine(
-    settings.DATABASE_URL,
-    connect_args=connect_args,
-    echo=False
-)
+try:
+    engine = create_engine(
+        settings.DATABASE_URL,
+        connect_args=connect_args,
+        echo=False
+    )
+    with engine.connect() as conn:
+        conn.execute(text("SELECT 1"))
+    print(f">> Successfully connected to database: {settings.DATABASE_URL.split('://')[0]}", flush=True)
+except Exception as e:
+    print(f">> Primary database connection failed: {e}. Falling back to SQLite smartattend.db", flush=True)
+    settings.DATABASE_URL = "sqlite:///./smartattend.db"
+    connect_args = {"check_same_thread": False, "timeout": 30}
+    engine = create_engine(
+        settings.DATABASE_URL,
+        connect_args=connect_args,
+        echo=False
+    )
 
 if settings.DATABASE_URL.startswith("sqlite"):
     from sqlalchemy import event

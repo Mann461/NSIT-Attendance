@@ -1,11 +1,12 @@
 import os
 from typing import Optional
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, status, Request
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, status, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.orm import Session
 from contextlib import asynccontextmanager
 
 from app.config import settings
-from app.database import engine, Base, SessionLocal
+from app.database import engine, Base, SessionLocal, get_db
 from app.api.v1.router import api_router
 from app.services.seed_service import seed_database
 from app.websocket.manager import ws_manager
@@ -32,12 +33,32 @@ async def lifespan(app: FastAPI):
     yield
     print(">> SmartAttend shutting down.", flush=True)
 
+from fastapi.responses import JSONResponse
+import traceback
+
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.VERSION,
     openapi_url=f"{settings.API_V1_STR}/openapi.json",
     lifespan=lifespan
 )
+
+# Global error handler ensuring CORS headers are always present
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    err_trace = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+    print(f">> Unhandled exception at {request.url.path}: {err_trace}", flush=True)
+    origin = request.headers.get("origin", "*")
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Database error or server exception", "error": str(exc)},
+        headers={
+            "Access-Control-Allow-Origin": origin,
+            "Access-Control-Allow-Credentials": "true",
+            "Access-Control-Allow-Methods": "*",
+            "Access-Control-Allow-Headers": "*",
+        }
+    )
 
 # FIX 11: Security Headers Middleware
 @app.middleware("http")
@@ -53,6 +74,7 @@ async def add_security_headers(request: Request, call_next):
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
+    allow_origin_regex=r"https://.*\.netlify\.app|http://localhost:\d+|http://127\.0\.0\.1:\d+",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -69,6 +91,26 @@ def root():
         "version": settings.VERSION,
         "docs": "/docs"
     }
+
+@app.get("/health")
+def health(db: Session = Depends(get_db)):
+    from sqlalchemy import text
+    try:
+        db.execute(text("SELECT 1"))
+        user_count = db.query(User).count()
+        return {
+            "status": "healthy",
+            "database": "connected",
+            "database_type": settings.DATABASE_URL.split("://")[0],
+            "users_count": user_count
+        }
+    except Exception as e:
+        return {
+            "status": "unhealthy",
+            "database": "error",
+            "error": str(e),
+            "database_type": settings.DATABASE_URL.split("://")[0]
+        }
 
 # FIX 1: Secure WebSocket Endpoint with JWT & Role Verification
 @app.websocket("/ws/attendance/{session_id}")
@@ -119,4 +161,3 @@ async def websocket_endpoint(
             await websocket.receive_text()
     except WebSocketDisconnect:
         ws_manager.disconnect(websocket, session_id)
-
