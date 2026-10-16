@@ -119,7 +119,14 @@ def test_burst_concurrent_load():
         # Pick or create an active lecture
         lec = db.query(ScheduledLecture).filter(ScheduledLecture.id == 9).first()
         if not lec:
-            lec = ScheduledLecture(timetable_id=1, date=lec.date if lec else "2026-09-14", scheduled_start="09:00", scheduled_end="10:00", status="SCHEDULED")
+            import datetime
+            lec = ScheduledLecture(
+                timetable_id=1,
+                date=datetime.date(2026, 9, 14),
+                scheduled_start=datetime.time(9, 0),
+                scheduled_end=datetime.time(10, 0),
+                status="SCHEDULED"
+            )
             db.add(lec)
             db.commit()
         

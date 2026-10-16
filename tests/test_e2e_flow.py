@@ -31,8 +31,8 @@ def test_full_smartattend_e2e_flow():
     fac_token = fac_resp.json()["access_token"]
     fac_headers = {"Authorization": f"Bearer {fac_token}"}
 
-    # 3. Test Today's Schedule Generation
-    sched_resp = client.get("/api/v1/timetable/schedule", headers=fac_headers)
+    # 3. Test Today's Schedule Generation (using scheduled weekday)
+    sched_resp = client.get("/api/v1/timetable/schedule?date=2026-10-14", headers=fac_headers)
     assert sched_resp.status_code == 200
     lectures = sched_resp.json()["lectures"]
     assert len(lectures) > 0

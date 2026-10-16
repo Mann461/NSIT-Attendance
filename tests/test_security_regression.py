@@ -20,12 +20,67 @@ from app.services.rate_limiter import attendance_rate_limiter
 
 client = TestClient(app)
 
+def get_or_create_active_session():
+    import datetime
+    from app.database import utc_now
+    from app.models.schema import ScheduledLecture, TimetableEntry
+    db = SessionLocal()
+    session = db.query(AttendanceSession).filter(AttendanceSession.status == "ACTIVE").first()
+    if not session:
+        session = db.query(AttendanceSession).first()
+        if session:
+            session.status = "ACTIVE"
+            session.opened_at = utc_now()
+            session.duration_minutes = 60
+            session.presence_code = "9999"
+            session.presence_code_expires_at = utc_now() + datetime.timedelta(minutes=60)
+            session.presence_challenge_required = True
+            db.commit()
+            db.refresh(session)
+        else:
+            te = db.query(TimetableEntry).first()
+            lec = db.query(ScheduledLecture).first()
+            if not lec:
+                lec = ScheduledLecture(
+                    timetable_id=te.id if te else 1,
+                    date=datetime.date(2026, 10, 14),
+                    scheduled_start=datetime.time(10, 25),
+                    scheduled_end=datetime.time(11, 20),
+                    lecture_number=1,
+                    status="ACTIVE"
+                )
+                db.add(lec)
+                db.commit()
+                db.refresh(lec)
+            session = AttendanceSession(
+                scheduled_lecture_id=lec.id,
+                token="test_active_session_token",
+                status="ACTIVE",
+                opened_at=utc_now(),
+                duration_minutes=60,
+                presence_code="9999",
+                presence_code_expires_at=utc_now() + datetime.timedelta(minutes=60),
+                presence_challenge_required=True
+            )
+            db.add(session)
+            db.commit()
+            db.refresh(session)
+    else:
+        if not session.presence_code:
+            session.presence_code = "9999"
+            session.presence_code_expires_at = utc_now() + datetime.timedelta(minutes=60)
+            session.presence_challenge_required = True
+            db.commit()
+            db.refresh(session)
+    db.close()
+    return session
+
 # -------------------------------------------------------------
 # 1. WEBSOCKET SECURITY REGRESSION
 # -------------------------------------------------------------
 def test_websocket_security_all_roles():
+    session = get_or_create_active_session()
     db = SessionLocal()
-    session = db.query(AttendanceSession).first()
     admin_user = db.query(User).filter(User.role == "ADMIN").first()
     faculty_user = db.query(User).filter(User.role == "FACULTY").first()
     student_user = db.query(User).filter(User.role == "STUDENT").first()
@@ -78,32 +133,6 @@ def test_websocket_security_all_roles():
     with client.websocket_connect(f"/ws/attendance/{session_id}?token={admin_token}") as ws:
         assert ws is not None
 
-
-def get_or_create_active_session():
-    import datetime
-    from app.database import utc_now
-    db = SessionLocal()
-    session = db.query(AttendanceSession).filter(AttendanceSession.status == "ACTIVE").first()
-    if not session:
-        session = db.query(AttendanceSession).first()
-        if session:
-            session.status = "ACTIVE"
-            session.opened_at = utc_now()
-            session.duration_minutes = 60
-            session.presence_code = "9999"
-            session.presence_code_expires_at = utc_now() + datetime.timedelta(minutes=60)
-            session.presence_challenge_required = True
-            db.commit()
-            db.refresh(session)
-    else:
-        if not session.presence_code:
-            session.presence_code = "9999"
-            session.presence_code_expires_at = utc_now() + datetime.timedelta(minutes=60)
-            session.presence_challenge_required = True
-            db.commit()
-            db.refresh(session)
-    db.close()
-    return session
 
 # -------------------------------------------------------------
 # 2. FAIL-FAST JWT SECRET CONFIGURATION REGRESSION
